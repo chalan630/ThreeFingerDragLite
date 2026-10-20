@@ -17,7 +17,20 @@ public static class KeyInjector {
             inputs[i++] = new INPUTK { type = INPUT_KEYBOARD, ki = new KEYBDINPUT { wVk = vk } };
         for (int k = vks.Length - 1; k >= 0; k--)
             inputs[i++] = new INPUTK { type = INPUT_KEYBOARD, ki = new KEYBDINPUT { wVk = vks[k], dwFlags = KEYEVENTF_KEYUP } };
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUTK>());
+        uint rc = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUTK>());
+        if (rc != inputs.Length)
+            Logger.Log($"key-inject: SendInput injected {rc}/{inputs.Length} events, error={Marshal.GetLastWin32Error()}");
+    }
+
+    /// <summary>Startup probe: proves the keyboard injection channel works in this process
+    /// (anti-keylogger software can block synthesized keyboard input per process).</summary>
+    public static bool SelfTest() {
+        SendInput(1, new[] { new INPUTK { type = INPUT_KEYBOARD, ki = new KEYBDINPUT { wVk = 0x7C /* F13 */ } } },
+            Marshal.SizeOf<INPUTK>());
+        bool seen = (GetAsyncKeyState(0x7C) & 0x8000) != 0;
+        SendInput(1, new[] { new INPUTK { type = INPUT_KEYBOARD, ki = new KEYBDINPUT { wVk = 0x7C, dwFlags = KEYEVENTF_KEYUP } } },
+            Marshal.SizeOf<INPUTK>());
+        return seen;
     }
 
     /// <summary>Switches to the previous/next virtual desktop (Win+Ctrl+Left/Right).</summary>

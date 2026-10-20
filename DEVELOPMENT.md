@@ -84,6 +84,7 @@ Idle ──恰好3指落下──▶ Armed ──累计移动≥StartThreshold�
 5. **SendInput 合成事件带注入标记，低级钩子类工具（AltSnap/AltDrag）会无视它们**。想让这类工具响应只有两条路：驱动级注入（没做）或绕开模拟直接调 API（本项目 Alt 模式的做法）。
 6. **窗口命中需要 Per-Monitor V2 DPI 感知**：`WindowFromPoint`/`GetCursorPos` 在未声明 PMv2 的进程里拿到的是缩放虚拟化坐标，混合 DPI 多屏下窗口拖动会错位。入口处 `SetProcessDpiAwarenessContext(-4)`。
 7. **WM_TIMER 精度约 15.6ms**，只适合 30ms 级兜底，别拿它做精细计时。
+8. **`SendInput` 的 `INPUT` 是 union，大小由 `MOUSEINPUT` 决定（x64 上 40 字节）**。只为键盘声明 `type + KEYBDINPUT` 会得到 32 字节的结构，`SendInput` 校验 cbSize 不符直接返回 0（一个事件都不注入，`GetLastError` 也未必有值）——症状是"键盘合成全部静默失败而鼠标注入正常"。键盘结构必须补 8 字节填充对齐到 40（见 `NativeMethods.INPUTK` 的 `_unionPadding`）。与陷阱 1 同族：封送错误不报编译错、不抛运行时异常，只在行为上静默失效。
 
 ## 5. 调参与手感指南
 

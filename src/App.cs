@@ -62,6 +62,7 @@ public class App : IDisposable {
 
         // Self-test: prove that THIS process can inject input at all (sandbox/integrity probe).
         RunInjectionSelfTest();
+        Logger.Log($"kbd-self-test: keyboard injection visible = {KeyInjector.SelfTest()}");
 
         while (GetMessageW(out MSG msg, IntPtr.Zero, 0, 0)) {
             TranslateMessage(ref msg);

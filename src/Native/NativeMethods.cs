@@ -265,8 +265,9 @@ internal static partial class NativeMethods {
         public IntPtr dwExtraInfo;
     }
 
-    // Keyboard variant of the SendInput INPUT struct (kept separate from the mouse one so the
-    // mouse injection path stays untouched).
+    // Keyboard variant of the SendInput INPUT struct. The real INPUT holds a union whose size is
+    // set by MOUSEINPUT (32 bytes on x64), so the keyboard layout must be padded to the same 40-byte
+    // total or SendInput rejects the call with cbSize mismatch (returns 0).
     [StructLayout(LayoutKind.Sequential)]
     public struct KEYBDINPUT {
         public ushort wVk;
@@ -280,6 +281,7 @@ internal static partial class NativeMethods {
     public struct INPUTK {
         public int type;
         public KEYBDINPUT ki;
+        private long _unionPadding; // KEYBDINPUT is 24 bytes; MOUSEINPUT is 32 — pad to keep cbSize at 40
     }
 
     [StructLayout(LayoutKind.Sequential)]
