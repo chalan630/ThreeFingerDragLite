@@ -263,8 +263,9 @@ public class DragEngine {
                     if (found) _armedMovement += dist;
                     if (_armedMovement >= _config.StartThreshold) {
                         Logger.Log($"engine: start resize (movement {_armedMovement:F1} >= {_config.StartThreshold})");
-                        if (AltWindowResizer.Start(_config.AltResizeCenterPercent, _config.AltResizeSidesPercent)) {
+                        if (AltWindowResizer.Start(_config.AltResizeCenterPercent)) {
                             _state = State.Resizing;
+                            ScrollSuppressor.SetOverrideCursor(AltWindowResizer.ZoneCursor);
                             if (found) AltWindowResizer.OnDelta(dx, dy);
                         } else {
                             Logger.Log("engine: resize target invalid → idle");

@@ -14,12 +14,16 @@ namespace ThreeFingerDragLite.Engine;
 /// absolute-position injection (absolute moves bypass ballistics) — window and cursor stay
 /// locked to the fingers 1:1 with zero readback latency.
 ///
-/// Region model per axis (mirrors AltSnap's ResizeCenter/SidesFraction):
-///   - center band of AltResizeCenterPercent% of the axis → BOTH edges move symmetrically
+/// Region model (nine-zone, per the AltSnap feel):
+/// each axis is split into a central band of AltResizeCenterPercent% of the axis' size plus the
+/// two parts on either side:
+///   - cursor in the central band on an axis → BOTH edges of that axis move symmetrically
 ///     (1:1 with the drag, axis center fixed)
-///   - side bands of AltResizeSidesPercent/2 % at each end → that end's edge moves
-///   - between the bands → DEAD: that axis does not resize at all (keeps unintended
-///     diagonal wobble from touching the other axis, which is what makes AltSnap feel precise)
+///   - cursor in the left/right (or top/bottom) part → only that nearest edge of the axis moves
+/// Combined: center×center = all four edges (AltSnap's "all directions" mode); left/right part
+/// with vertical center = width only; top/bottom part with horizontal center = height only;
+/// corner quadrants = the two nearest edges (classic corner resize). No dead zones.
+/// The matching resize-arrow cursor is exposed in <see cref="ZoneCursor"/>.
 /// </summary>
 public static class AltWindowResizer {
     private const int MinWidth = 120;
@@ -28,13 +32,17 @@ public static class AltWindowResizer {
     private static IntPtr _hwnd;
     private static RECT _base; // window rect at gesture start
     private static int _startCursorX, _startCursorY;
-    private static float _accX, _accY; // accumulated scaled finger delta
-    private static int _horizMode, _vertMode; // 0=dead, 1=near, 2=far, 3=both
+    private static float _accX, _accY; // accumulated raw finger delta
+    private static int _horizMode, _vertMode; // 1=near(left/top), 2=far(right/bottom), 3=both
     private static bool _active;
 
-    /// <summary>Begins resizing the window under the cursor; the region model comes from the two
-    /// percent parameters (see the class comment). Returns false when there is no valid target.</summary>
-    public static bool Start(int centerPercent, int sidesPercent) {
+    /// <summary>The resize-arrow cursor matching the grabbed zone (set by the last Start call).</summary>
+    public static IntPtr ZoneCursor { get; private set; }
+
+    /// <summary>Begins resizing the window under the cursor; <paramref name="centerPercent"/> is
+    /// the width of the central symmetric region in percent of the window (0 = plain nearest-edge).
+    /// Returns false when there is no valid target.</summary>
+    public static bool Start(int centerPercent) {
         _active = false;
         _hwnd = IntPtr.Zero;
         _accX = 0;
@@ -46,8 +54,9 @@ public static class AltWindowResizer {
         _base = rect;
         _startCursorX = cursor.X;
         _startCursorY = cursor.Y;
-        _horizMode = AxisMode(cursor.X, rect.left, rect.right, centerPercent, sidesPercent);
-        _vertMode = AxisMode(cursor.Y, rect.top, rect.bottom, centerPercent, sidesPercent);
+        _horizMode = AxisMode(cursor.X, rect.left, rect.right, centerPercent);
+        _vertMode = AxisMode(cursor.Y, rect.top, rect.bottom, centerPercent);
+        ZoneCursor = ZoneCursorFor(_horizMode, _vertMode);
 
         _active = true;
         Logger.Log($"alt-resize: tracking window 0x{hwnd:X} (h: {AxisDesc(_horizMode)}, v: {AxisDesc(_vertMode)})");
@@ -113,20 +122,25 @@ public static class AltWindowResizer {
         _hwnd = IntPtr.Zero;
     }
 
-    /// <summary>0=dead, 1=near(left/top), 2=far(right/bottom), 3=both(center band).</summary>
-    private static int AxisMode(float pos, int lo, int hi, int centerPercent, int sidesPercent) {
+    /// <summary>1=near(left/top), 2=far(right/bottom), 3=both(center band).</summary>
+    private static int AxisMode(float pos, int lo, int hi, int centerPercent) {
         float size = hi - lo;
-        if (size <= 0) return 0;
+        if (size <= 0) return 1;
         float center = (lo + hi) / 2f;
         if (centerPercent > 0 && MathF.Abs(pos - center) <= size * centerPercent / 200f) return 3;
-        float band = size * sidesPercent / 200f;
-        if (pos - lo < band) return 1;
-        if (hi - pos < band) return 2;
-        return 0;
+        return pos < center ? 1 : 2;
+    }
+
+    private static IntPtr ZoneCursorFor(int h, int v) {
+        if (h == 3 && v == 3) return LoadCursorW(IntPtr.Zero, IDC_SIZEALL);
+        if (h == 3) return LoadCursorW(IntPtr.Zero, IDC_SIZENS);
+        if (v == 3) return LoadCursorW(IntPtr.Zero, IDC_SIZEWE);
+        bool diagonalNWSE = (h == 2) == (v == 2); // right+bottom or left+top
+        return LoadCursorW(IntPtr.Zero, diagonalNWSE ? IDC_SIZENWSE : IDC_SIZENESW);
     }
 
     private static string AxisDesc(int mode) => mode switch {
-        3 => "both", 2 => "right/bottom", 1 => "left/top", _ => "none"
+        3 => "both", 2 => "right/bottom", _ => "left/top"
     };
 
     private static int Round(float v) => (int)MathF.Round(v);

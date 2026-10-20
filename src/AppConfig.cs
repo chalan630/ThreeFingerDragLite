@@ -42,15 +42,10 @@ public class AppConfig {
     /// 滚动；个别走 Pointer 原生通道的应用（UWP/WinUI 类）仍可能漏。</summary>
     public bool AltWindowResize { get; set; } = true;
 
-    /// <summary>Alt+双指缩放时窗口中央"全方向"区域的宽度（占窗口对应边 的百分比，0~100，
-    /// 对齐 AltSnap 的 CenterFraction=24）：光标落在中央区域内时四条边同时对称缩放。
-    /// 0 = 关闭中央模式。</summary>
+    /// <summary>Alt+双指缩放的中央"全方向"区域宽度（占窗口对应边的百分比，0~100，默认 24）：
+    /// 光标落在中央区域内时四条边同时对称缩放；左右部分只动最近的竖边（宽度），上下部分只动
+    /// 最近的横边（高度），角落自然形成角缩放。0 = 关闭中央模式。</summary>
     public int AltResizeCenterPercent { get; set; } = 24;
-
-    /// <summary>Alt+双指缩放时边缘抓取带的总宽度（占窗口对应边的百分比，对齐 AltSnap 的
-    /// SidesFraction=24，两侧各占一半）：光标落在边缘抓取带内才动那条边。边缘带与中央区域
-    /// 之间是死区——该轴完全不缩放，避免斜向抖动误触另一轴（AltSnap 手感的关键）。</summary>
-    public int AltResizeSidesPercent { get; set; } = 24;
 
     /// <summary>四指手势接管（默认关闭）：启用前先把系统"四指手势"设为"无"，否则会双重触发。
     /// 接管内容：横滑切换虚拟桌面（合成 Win+Ctrl+方向键）、四指点按打开反向任务切换器
@@ -130,10 +125,8 @@ public class AppConfig {
                            还原；手势期间自动吞掉滚轮消息防止内容滚动（个别
                            Pointer 原生应用可能漏）
         AltResizeCenterPercent
-                           中央"四边同缩"区域宽度百分比（0~100，0=关闭中央模式）
-        AltResizeSidesPercent
-                           边缘抓取带总宽度百分比（两侧各半）；边缘带与中央区域之间
-                           是死区，该轴不缩放（防斜向抖动，AltSnap 手感关键）
+                           中央"四边同缩"区域宽度百分比（0~100，0=关闭）；
+                           左右部分只动宽度、上下部分只动高度、角落为角缩放
         FourFingerGestures 四指手势接管（默认关）。启用前必须先把系统设置的”四指手势”
                            改为”无”，否则桌面切换会双重触发。接管内容：
                            横滑 = 切换上/下一个虚拟桌面；四指点按 = 反向任务切换器

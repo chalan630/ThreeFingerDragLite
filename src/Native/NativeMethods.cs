@@ -429,6 +429,18 @@ internal static partial class NativeMethods {
     public const int WM_MOUSEHWHEEL = 0x020E;
 
     [DllImport("user32.dll")]
+    public static extern IntPtr LoadCursorW(IntPtr hInstance, IntPtr lpCursorName);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SetCursor(IntPtr hCursor);
+
+    public static readonly IntPtr IDC_SIZENWSE = new(32642);
+    public static readonly IntPtr IDC_SIZENESW = new(32643);
+    public static readonly IntPtr IDC_SIZEWE = new(32644);
+    public static readonly IntPtr IDC_SIZENS = new(32645);
+    public static readonly IntPtr IDC_SIZEALL = new(32646);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(POINT point);
 
     [DllImport("user32.dll")]

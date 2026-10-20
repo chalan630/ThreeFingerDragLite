@@ -160,7 +160,6 @@ public class App : IDisposable {
         _config.AltWindowDrag = fresh.AltWindowDrag;
         _config.AltWindowResize = fresh.AltWindowResize;
         _config.AltResizeCenterPercent = fresh.AltResizeCenterPercent;
-        _config.AltResizeSidesPercent = fresh.AltResizeSidesPercent;
         _config.FourFingerGestures = fresh.FourFingerGestures;
         _config.FourFingerSwipeThreshold = fresh.FourFingerSwipeThreshold;
         _config.FourFingerSwipeStride = fresh.FourFingerSwipeStride;
