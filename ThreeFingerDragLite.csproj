@@ -8,7 +8,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>ThreeFingerDragLite</RootNamespace>
     <AssemblyName>ThreeFingerDragLite</AssemblyName>
-    <Version>1.2.0</Version>
+    <Version>1.2.1</Version>
     <Description>FastGestures-style three-finger drag for Windows precision touchpads, in a tiny standalone tray tool.</Description>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>

@@ -30,11 +30,15 @@ namespace ThreeFingerDragLite.Engine;
 ///
 /// Four-finger namespace (requires the system "four-finger gestures" to be set to None):
 ///   Idle    → FourArmed   : exactly 4 fingers, no Alt, FourFingerGestures enabled
-///   FourArmed → FourSwiping : horizontal swipe past FourFingerSwipeThreshold (dominant axis) →
-///                             switch virtual desktop (synthesized Win+Ctrl+Left/Right)
+///   FourArmed → FourSwiping : horizontal swipe past FourFingerSwipeThreshold (dominant axis) —
+///                             nothing fires yet; the commit happens at lift
 ///   FourArmed → tap        : silent lift within FourFingerTapMaxMs with little movement →
 ///                             synthesized Ctrl+Alt+Shift+Tab (reverse persistent switcher)
-///   FourSwiping : continued movement retriggers a desktop switch every FourFingerSwipeStride
+///   FourSwiping : tracks the centroid; when the gesture ends (fingers leave / count drops /
+///                 stillness beyond FourFingerLiftMs) the TOTAL displacement decides: below the
+///                 threshold = canceled (swiping back undoes the switch, native semantics),
+///                 otherwise switch desktop 1..3 times by displacement (Win+Ctrl+Left/Right,
+///                 native direction: right swipe = previous desktop)
 /// </summary>
 public class DragEngine {
     private enum State {
@@ -68,9 +72,9 @@ public class DragEngine {
     // Four-finger gesture bookkeeping (swipe/tap recognition).
     private readonly Dictionary<int, (float x, float y)> _fourAnchors = new();
     private float _fourAnchorX, _fourAnchorY; // centroid at gesture start
+    private float _fourCurrentX;              // latest centroid X (commit-at-lift evaluation)
     private long _fourStartTime;
     private float _fourMaxMove;               // largest per-finger displacement from its anchor
-    private float _fourLastFireX;             // centroid X at the last desktop switch
     private bool _tapCandidate;               // partial lift: maybe a tap, confirmed by silence
     private long _tapCandidateStart;
     private float _tapCandidateMove;
@@ -312,30 +316,23 @@ public class DragEngine {
                     float dxn = cx - _fourAnchorX;
                     if (MathF.Abs(dxn) >= _config.FourFingerSwipeThreshold &&
                         MathF.Abs(dxn) > MathF.Abs(cy - _fourAnchorY) * 1.5f) {
-                        Logger.Log($"engine: 4-finger swipe → {(dxn > 0 ? "next" : "previous")} desktop");
-                        KeyInjector.SwitchDesktop(dxn > 0);
-                        _fourLastFireX = cx;
+                        // Nothing fires yet — the commit happens at lift, so the user can still
+                        // swipe back below the threshold to cancel (native semantics).
+                        Logger.Verbose("four armed → swiping (commit at lift)");
+                        _fourCurrentX = cx;
                         _state = State.FourSwiping;
                     }
                 }
                 break;
 
             case State.FourSwiping:
-                if (liftedGap || contacts.Length != 4) {
-                    Logger.Verbose("four swipe → idle");
-                    _state = State.Idle;
-                    ResetQuarantine();
+                if (liftedGap) break; // fingers held still (pad stops reporting); Tick's stillness window decides
+                if (contacts.Length == 4) {
+                    _fourCurrentX = Centroid(contacts).x;
                     break;
                 }
-                {
-                    var (cx, _) = Centroid(contacts);
-                    float d = cx - _fourLastFireX;
-                    if (MathF.Abs(d) >= _config.FourFingerSwipeStride) {
-                        Logger.Log($"engine: 4-finger swipe (continued) → {(d > 0 ? "next" : "previous")} desktop");
-                        KeyInjector.SwitchDesktop(d > 0);
-                        _fourLastFireX = cx;
-                    }
-                }
+                // Finger count dropped: a real lift is in progress — evaluate now.
+                FinishFourSwipe();
                 break;
         }
 
@@ -408,15 +405,35 @@ public class DragEngine {
                 break;
 
             case State.FourSwiping:
-                if (now - _prevTime > _config.LiftedSilenceMs) {
-                    _state = State.Idle;
-                    ResetQuarantine();
+                // Stillness window: on this pad a stationary hand stops the reports, so silence is
+                // ambiguous (holding vs lifted). Holding longer than this commits at the held position.
+                if (now - _prevTime > Math.Max(_config.LiftedSilenceMs, _config.FourFingerLiftMs)) {
+                    Logger.Verbose("engine: four-finger stillness → commit");
+                    FinishFourSwipe();
                 }
                 break;
         }
     }
 
     // ---------- Four-finger swipe/tap recognition ----------
+
+    /// <summary>Commits the swipe: the total displacement at gesture end decides whether (and how
+    /// many times) to switch desktops — swiping back below the threshold cancels, native direction
+    /// (right swipe = previous desktop).</summary>
+    private void FinishFourSwipe() {
+        float total = _fourCurrentX - _fourAnchorX;
+        if (MathF.Abs(total) >= _config.FourFingerSwipeThreshold) {
+            int count = Math.Clamp((int)(MathF.Abs(total) / _config.FourFingerSwipeStride), 1, 3);
+            Logger.Log($"engine: 4-finger swipe committed ({total:F0}) → {(total > 0 ? "previous" : "next")} desktop" +
+                       (count > 1 ? $" ×{count}" : ""));
+            for (int i = 0; i < count; i++) KeyInjector.SwitchDesktop(total < 0);
+        } else {
+            Logger.Verbose("engine: 4-finger swipe canceled (returned before lift)");
+        }
+        _tapCandidate = false;
+        _state = State.Idle;
+        ResetQuarantine();
+    }
 
     private void EnterFourArmed(TouchpadContact[] contacts, long now) {
         _state = State.FourArmed;
@@ -426,6 +443,7 @@ public class DragEngine {
         var (x, y) = Centroid(contacts);
         _fourAnchorX = x;
         _fourAnchorY = y;
+        _fourCurrentX = x;
         _fourMaxMove = 0;
     }
 

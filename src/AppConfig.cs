@@ -58,6 +58,10 @@ public class AppConfig {
     /// <summary>四指点按允许的最大指位移（触控板原始单位），超过视为滑动。</summary>
     public int FourFingerTapTolerance { get; set; } = 15;
 
+    /// <summary>横滑的静默判定窗口（毫秒）：手指停住不动触控板会停发报文，超过该时长按"抬指"提交切换。
+    /// 调大 = 停顿更宽容（可停更久再滑回撤销），调小 = 切换更快但容易把停顿误判成抬指。</summary>
+    public int FourFingerLiftMs { get; set; } = 200;
+
     /// <summary>判定"手指已全部抬离"的输入静默时长（毫秒）。触控板持续上报约每 8~15ms 一帧。</summary>
     public int LiftedSilenceMs { get; set; } = 60;
 
@@ -122,12 +126,13 @@ public class AppConfig {
         HoldExitMoveThreshold
                            保持期间单指移动超过该距离即结束拖动（默认 5）
         FourFingerSwipeThreshold
-                           四指横滑触发切桌面的累计位移（默认 60，越小越灵敏）
+                           四指横滑触发位移（默认 60，越小越灵敏；抬指时总位移落回该值内=撤销）
         FourFingerSwipeStride
-                           横滑持续时每多少位移再切一个桌面（默认 120）
-        FourFingerTapMaxMs 四指点按最长按住时长（默认 300 毫秒）
+                           总位移每超过多少多切一格桌面（默认 300，单次最多 3 格）
+        FourFingerTapMaxMs 四指点按最长按住时长（默认 250 毫秒）
         FourFingerTapTolerance
-                           四指点按允许的最大指位移（默认 25，超过算滑动）
+                           四指点按允许的最大指位移（默认 15，超过算滑动）
+        FourFingerLiftMs   横滑静默判定窗口（默认 200 毫秒）：停住不动超过该时长即提交切换
         Acceleration       指针加速度，10 为标准（0 关闭）。与 macOS 手感相关的曲线
         Logging            写运行日志（log.txt，出错排查用）
         VerboseLog         记录每一帧触点数据（日志量很大，仅排查用）

@@ -164,6 +164,7 @@ public class App : IDisposable {
         _config.FourFingerSwipeStride = fresh.FourFingerSwipeStride;
         _config.FourFingerTapMaxMs = fresh.FourFingerTapMaxMs;
         _config.FourFingerTapTolerance = fresh.FourFingerTapTolerance;
+        _config.FourFingerLiftMs = fresh.FourFingerLiftMs;
         _config.LiftedSilenceMs = fresh.LiftedSilenceMs;
         _config.HoldExitMoveThreshold = fresh.HoldExitMoveThreshold;
 

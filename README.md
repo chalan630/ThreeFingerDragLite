@@ -15,7 +15,7 @@ Windows 精密触控板上的 macOS 式**三指拖动**，外加 **Alt + 三指�
 | 拖动中只剩一指 | 交给系统光标速度继续拖动（消除多指抖动，FastGestures 同款行为） |
 | **Alt + 三指移动** | **直接拖动光标下的窗口**：最大化窗口自动还原，松开 Alt 立即放下 |
 | **Alt + 四指拖动** | **AltSnap 右键拖动式调整窗口大小**：光标落在哪个象限，最近的横竖边就跟随移动，对边固定；最大化先还原，松开 Alt 立即结束 |
-| 四指横滑 / 点按 | 可选接管：横滑切换上/下一个虚拟桌面、四指点按打开反向任务切换器（Ctrl+Alt+Shift+Tab）。启用前先把系统"四指手势"设为"无" |
+| 四指横滑 / 点按 | 可选接管：横滑切换虚拟桌面（**抬指提交**——滑到一半滑回可撤销，长滑一次切多格，方向对齐系统原生）、四指点按打开反向任务切换器（Ctrl+Alt+Shift+Tab）。启用前先把系统"四指手势"设为"无" |
 | 真实鼠标 Alt+拖拽 | 不受任何影响，仍由 AltSnap 全权处理 |
 
 > 为什么 Alt 模式是"直接移动窗口"：AltSnap/AltDrag 通过低级钩子监听**物理**鼠标按键，任何工具用 SendInput 模拟的按键对它们不可见（已实测验证）。因此本工具检测到 Alt 时绕开按键模拟，直接调用窗口 API 移动窗口——两条输入路径互不干扰。
@@ -64,10 +64,11 @@ Windows 精密触控板上的 macOS 式**三指拖动**，外加 **Alt + 三指�
   "AltWindowDrag": true,            // Alt+三指直接移动窗口
   "AltWindowResize": true,          // Alt+四指调整窗口大小（AltSnap 右键拖动语义）
   "FourFingerGestures": false,      // 四指接管：横滑切桌面 + 点按反向切换器（启用前把系统四指手势设为"无"）
-  "FourFingerSwipeThreshold": 60,   // 四指横滑触发位移（越小越灵敏）
-  "FourFingerSwipeStride": 120,     // 横滑持续时每多少位移再切一个桌面
-  "FourFingerTapMaxMs": 300,        // 四指点按最长按住时长
-  "FourFingerTapTolerance": 25,     // 四指点按允许的最大指位移
+  "FourFingerSwipeThreshold": 60,   // 四指横滑触发位移（越小越灵敏；抬指时落回阈值内=撤销）
+  "FourFingerSwipeStride": 300,     // 总位移每超过多少多切一格（单次最多 3 格）
+  "FourFingerTapMaxMs": 250,        // 四指点按最长按住时长
+  "FourFingerTapTolerance": 15,     // 四指点按允许的最大指位移
+  "FourFingerLiftMs": 200,          // 横滑静默判定窗口：停住超过该时长即提交切换
   "LiftedSilenceMs": 60,            // 输入静默多久判定"手指已全部抬离"
   "HoldExitMoveThreshold": 5,       // 保持期间单指移动多少结束拖动
   "Logging": true,                  // 运行日志
