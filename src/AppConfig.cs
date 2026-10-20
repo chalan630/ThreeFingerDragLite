@@ -50,13 +50,13 @@ public class AppConfig {
     public int FourFingerSwipeThreshold { get; set; } = 60;
 
     /// <summary>横滑持续时每累计多少位移再切换一个桌面（连续切换步长）。</summary>
-    public int FourFingerSwipeStride { get; set; } = 120;
+    public int FourFingerSwipeStride { get; set; } = 300;
 
     /// <summary>四指点按的最长按住时长（毫秒），超过视为非点按。</summary>
-    public int FourFingerTapMaxMs { get; set; } = 300;
+    public int FourFingerTapMaxMs { get; set; } = 250;
 
     /// <summary>四指点按允许的最大指位移（触控板原始单位），超过视为滑动。</summary>
-    public int FourFingerTapTolerance { get; set; } = 25;
+    public int FourFingerTapTolerance { get; set; } = 15;
 
     /// <summary>判定"手指已全部抬离"的输入静默时长（毫秒）。触控板持续上报约每 8~15ms 一帧。</summary>
     public int LiftedSilenceMs { get; set; } = 60;
