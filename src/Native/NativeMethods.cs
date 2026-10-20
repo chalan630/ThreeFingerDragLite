@@ -450,6 +450,7 @@ internal static partial class NativeMethods {
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOZORDER = 0x0004;
     public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_ASYNCWINDOWPOS = 0x4000;
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

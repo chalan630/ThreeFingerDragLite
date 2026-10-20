@@ -54,29 +54,30 @@ public static class AltWindowResizer {
         return true;
     }
 
-    /// <summary>Accumulates a scaled finger delta, moves the cursor in lockstep (absolute) and
-    /// applies it to the grabbed edges. Call once per gesture frame.</summary>
-    public static void OnScaledDelta(float x, float y) {
+    /// <summary>Accumulates a RAW finger delta (no speed/acceleration curve — resize tracks 1:1
+    /// like AltSnap with a real mouse), moves the cursor in lockstep (absolute) and applies it to
+    /// the grabbed edges. Call once per gesture frame.</summary>
+    public static void OnDelta(float dx, float dy) {
         if (!_active) return;
-        _accX += x;
-        _accY += y;
-        int dx = (int)MathF.Round(_accX);
-        int dy = (int)MathF.Round(_accY);
-        MouseInjector.SetCursorAbsolute(_startCursorX + dx, _startCursorY + dy);
+        _accX += dx;
+        _accY += dy;
+        int adx = (int)MathF.Round(_accX);
+        int ady = (int)MathF.Round(_accY);
+        MouseInjector.SetCursorAbsolute(_startCursorX + adx, _startCursorY + ady);
 
         int left = _base.left, right = _base.right;
         switch (_horizMode) {
-            case 3: left = Round(_base.left - dx / 2f); right = Round(_base.right + dx / 2f); break;
-            case 2: right = _base.right + dx; break;
-            case 1: left = _base.left + dx; break;
+            case 3: left = Round(_base.left - adx / 2f); right = Round(_base.right + adx / 2f); break;
+            case 2: right = _base.right + adx; break;
+            case 1: left = _base.left + adx; break;
             // 0: dead axis — base edges stay
         }
 
         int top = _base.top, bottom = _base.bottom;
         switch (_vertMode) {
-            case 3: top = Round(_base.top - dy / 2f); bottom = Round(_base.bottom + dy / 2f); break;
-            case 2: bottom = _base.bottom + dy; break;
-            case 1: top = _base.top + dy; break;
+            case 3: top = Round(_base.top - ady / 2f); bottom = Round(_base.bottom + ady / 2f); break;
+            case 2: bottom = _base.bottom + ady; break;
+            case 1: top = _base.top + ady; break;
         }
 
         // Clamp to the minimum size without moving whatever is fixed (in symmetric mode the base center).
@@ -101,7 +102,10 @@ public static class AltWindowResizer {
             top = bottom - height;
         }
 
-        SetWindowPos(_hwnd, IntPtr.Zero, left, top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+        // Async: a slow target app (browser relayout) must never block the raw-input thread and
+        // back up gesture frames — pending positions coalesce instead.
+        SetWindowPos(_hwnd, IntPtr.Zero, left, top, width, height,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     }
 
     public static void End() {

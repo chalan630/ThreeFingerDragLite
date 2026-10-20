@@ -256,16 +256,16 @@ public class DragEngine {
                     break;
                 }
                 {
-                    (bool found, float dx, float dy, float dist) = GetMaxTrustedDelta(contacts, now);
+                    // Alt+two-finger is a deliberate chord, so arming skips the 40ms trust
+                    // quarantine (startup latency); a landing-coordinate correction is absorbed
+                    // by clamping the per-frame delta instead.
+                    (bool found, float dx, float dy, float dist) = GetMaxMatchedDelta(contacts);
                     if (found) _armedMovement += dist;
                     if (_armedMovement >= _config.StartThreshold) {
                         Logger.Log($"engine: start resize (movement {_armedMovement:F1} >= {_config.StartThreshold})");
                         if (AltWindowResizer.Start(_config.AltResizeCenterPercent, _config.AltResizeSidesPercent)) {
                             _state = State.Resizing;
-                            if (found) {
-                                (float sx, float sy) = ComputeScaled(dx, dy, gap);
-                                AltWindowResizer.OnScaledDelta(sx, sy);
-                            }
+                            if (found) AltWindowResizer.OnDelta(dx, dy);
                         } else {
                             Logger.Log("engine: resize target invalid → idle");
                             _state = State.Idle;
@@ -295,10 +295,7 @@ public class DragEngine {
                 }
                 {
                     (bool found, float dx, float dy, float _) = GetMaxTrustedDelta(contacts, now);
-                    if (found) {
-                        (float sx, float sy) = ComputeScaled(dx, dy, gap);
-                        AltWindowResizer.OnScaledDelta(sx, sy);
-                    }
+                    if (found) AltWindowResizer.OnDelta(dx, dy); // raw 1:1 — no speed/accel curve
                 }
                 break;
 
@@ -508,6 +505,32 @@ public class DragEngine {
         }
 
         return (best.found, best.dx, best.dy, bestDist);
+    }
+
+    /// <summary>Like GetMaxTrustedDelta but ignores the trust quarantine, and clamps each frame's
+    /// delta so a landing-coordinate correction (first report vs second) cannot fake movement.
+    /// Used for resize arming where the 40ms quarantine would be pure startup latency.</summary>
+    private (bool found, float dx, float dy, float dist) GetMaxMatchedDelta(TouchpadContact[] contacts) {
+        const float clamp = 25f;
+        UpdateTrust(contacts, NativeMethods.NowMs()); // keep the bookkeeping consistent
+
+        float bestDist = 0;
+        (bool found, float dx, float dy, float dist) best = (false, 0, 0, 0);
+
+        foreach (var contact in contacts) {
+            foreach (var prev in _prevContacts) {
+                if (prev.ContactId != contact.ContactId) continue;
+                float dist = contact.GetDist2D(prev);
+                if (dist > bestDist) {
+                    float scale = dist > clamp ? clamp / dist : 1f;
+                    bestDist = dist;
+                    best = (true, (contact.X - prev.X) * scale, (contact.Y - prev.Y) * scale, MathF.Min(dist, clamp));
+                }
+                break;
+            }
+        }
+
+        return best;
     }
 
     private void UpdateTrust(TouchpadContact[] contacts, long now) {
