@@ -7,17 +7,19 @@ namespace ThreeFingerDragLite.Engine;
 /// FastGestures-style three-finger drag state machine.
 ///
 /// States and transitions (behavior spec from FastGestures docs/usage):
-///   Idle    → Armed      : 3+ fingers land on the touchpad
-///   Armed   → Dragging   : trusted fingers accumulate StartThreshold movement with 3+ fingers down
+///   Idle    → Armed      : exactly 3 fingers land on the touchpad (4+ fingers belong to the
+///                          system gesture namespace — never armed, never trigger)
+///   Armed   → Dragging   : trusted fingers accumulate StartThreshold movement with exactly 3 fingers down
 ///                          (progressive trigger: the first fingers may already be moving when
 ///                           the remaining ones land — no need for a simultaneous 3-finger touchdown)
-///   Armed   → Idle       : fewer than 3 fingers, or all fingers lifted
+///   Armed   → Idle       : finger count is no longer exactly 3, or all fingers lifted
 ///   Dragging             : injects cursor deltas (max trusted-finger delta, with speed/acceleration);
 ///                          with exactly one finger left the system cursor speed takes over if enabled
 ///   Dragging  → Holding  : all fingers lifted (input silence) and HoldEnabled
-///   Dragging  → Idle     : all fingers lifted and !HoldEnabled
-///   Holding   → Dragging : 2+ fingers placed back within HoldTimeMs (re-grip continues the drag)
-///   Holding   → Idle     : hold timeout, or a single finger moves slightly (FastGestures exit gesture)
+///   Dragging  → Idle     : all fingers lifted and !HoldEnabled, or 4+ fingers land (clean release)
+///   Holding   → Dragging : 2-3 fingers placed back within HoldTimeMs (re-grip continues the drag)
+///   Holding   → Idle     : hold timeout, a single finger moves slightly (FastGestures exit gesture),
+///                          or 4+ fingers land (clean release so system gestures take over)
 /// </summary>
 public class DragEngine {
     private enum State {
@@ -98,7 +100,7 @@ public class DragEngine {
                 // lifting) can fire as soon as the third finger lands, without waiting
                 // out the quarantine delay again.
                 UpdateTrust(contacts, now);
-                if (contacts.Length >= 3) {
+                if (contacts.Length == 3) {
                     Logger.Verbose("idle → armed");
                     _state = State.Armed;
                     _armedMovement = 0;
@@ -112,7 +114,7 @@ public class DragEngine {
                     ResetQuarantine();
                     break;
                 }
-                if (contacts.Length >= 3) {
+                if (contacts.Length == 3) {
                     (bool found, float dx, float dy, float dist) = GetMaxTrustedDelta(contacts, now);
                     if (found) _armedMovement += dist;
                     if (_armedMovement >= _config.StartThreshold) {
@@ -147,6 +149,14 @@ public class DragEngine {
                     }
                     break;
                 }
+                if (contacts.Length >= 4) {
+                    // 4+ fingers is the system gesture namespace (e.g. desktop swipe): release cleanly.
+                    Logger.Log("engine: 4+ fingers → release");
+                    ReleaseDragPress();
+                    _state = State.Idle;
+                    ResetQuarantine();
+                    break;
+                }
                 if (contacts.Length >= 2) {
                     (bool found, float dx, float dy, float _) = GetMaxTrustedDelta(contacts, now);
                     if (found) InjectDelta(dx, dy, gap);
@@ -162,6 +172,13 @@ public class DragEngine {
 
             case State.Holding:
                 if (EndAltDragIfAltReleased()) break;
+                if (contacts.Length >= 4) {
+                    Logger.Log("engine: 4+ fingers during hold → release");
+                    ReleaseDragPress();
+                    _state = State.Idle;
+                    ResetQuarantine();
+                    break;
+                }
                 if (contacts.Length >= 2 && _config.HoldResumeEnabled) {
                     Logger.Log("engine: fingers back → resume drag");
                     ResetQuarantine(); // avoid a cursor jump from the old contact references
