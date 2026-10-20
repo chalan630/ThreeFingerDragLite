@@ -72,6 +72,12 @@ public class ContactAssembler {
         return frames;
     }
 
+    /// <summary>Drops any half-assembled frame (after sleep/wake or a device change).</summary>
+    public void Reset() {
+        _lastContacts.Clear();
+        _targetContactCount = 0;
+    }
+
     private static void Deduplicate(List<TouchpadContact> contacts) {
         var seen = new HashSet<int>();
         int write = 0;

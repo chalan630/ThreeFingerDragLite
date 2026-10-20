@@ -1,18 +1,27 @@
-using ThreeFingerDragLite.Native;
 using ThreeFingerDragLite.Touchpad;
 
 namespace ThreeFingerDragLite.Engine;
 
 /// <summary>
-/// FastGestures-style three-finger drag state machine.
+/// FastGestures-style multi-finger gesture state machine.
 ///
-/// States and transitions (behavior spec from FastGestures docs/usage):
-///   Idle    → Armed      : exactly 3 fingers land on the touchpad (4+ fingers belong to the
-///                          system gesture namespace — never armed, never trigger)
-///   Armed   → Dragging   : trusted fingers accumulate StartThreshold movement with exactly 3 fingers down
-///                          (progressive trigger: the first fingers may already be moving when
-///                           the remaining ones land — no need for a simultaneous 3-finger touchdown)
-///   Armed   → Idle       : finger count is no longer exactly 3, or all fingers lifted
+/// A chord (finger count + whether the modifier key is held) maps to an action through the config:
+///   3 fingers            → ThreeFingerAction          (default Drag: simulated mouse-button drag)
+///   modifier + 3 fingers → ModifiedThreeFingerAction  (default MoveWindow)
+///   modifier + 2 fingers → ModifiedTwoFingerAction    (default ResizeWindow)
+/// Actions: Drag (button press + cursor motion), MoveWindow / ResizeWindow (direct window APIs, no
+/// button simulation — AltSnap-style), None.
+///
+/// States and transitions:
+///   Idle    → Armed      : the finger count matches a chord with an action (4+ fingers belong to the
+///                          system gesture namespace — never armed, never trigger). Resize chords also
+///                          start swallowing wheel messages here so the content does not scroll.
+///   Armed   → Dragging   : Drag/MoveWindow — trusted fingers accumulate StartThreshold movement
+///                          (progressive trigger: the first fingers may already be moving when the
+///                          remaining ones land)
+///   Armed   → Resizing   : ResizeWindow — matched fingers accumulate StartThreshold movement and a
+///                          valid window is under the cursor (otherwise back to Idle)
+///   Armed   → Idle       : finger count changes, modifier released (modifier chords), or fingers lifted
 ///   Dragging             : injects cursor deltas (max trusted-finger delta, with speed/acceleration);
 ///                          with exactly one finger left the system cursor speed takes over if enabled
 ///   Dragging  → Holding  : all fingers lifted (input silence) and HoldEnabled
@@ -20,26 +29,8 @@ namespace ThreeFingerDragLite.Engine;
 ///   Holding   → Dragging : 2-3 fingers placed back within HoldTimeMs (re-grip continues the drag)
 ///   Holding   → Idle     : hold timeout, a single finger moves slightly (FastGestures exit gesture),
 ///                          or 4+ fingers land (clean release so system gestures take over)
-///   Idle    → ResizeArmed : Alt held + exactly 2 fingers (AltWindowResize enabled) — AltSnap-style
-///                           window resize, mirroring Alt+right-drag; a gesture-scoped low-level
-///                           mouse hook swallows wheel events so the window content does not scroll;
-///                           only arms from Idle so a hold-resume with 2 fingers keeps resuming the drag
-///   ResizeArmed → Resizing : trusted 2-finger movement reaches StartThreshold and a valid window
-///                            is under the cursor (otherwise back to Idle)
-///   Resizing   : injects cursor deltas; the window edges nearest to the gesture-start cursor follow it
-///   Resizing  → Idle      : Alt released, fingers lifted / count changed, or input silence
-///
-/// Four-finger namespace (requires the system "four-finger gestures" to be set to None):
-///   Idle    → FourArmed   : exactly 4 fingers, no Alt, FourFingerGestures enabled
-///   FourArmed → FourSwiping : horizontal swipe past FourFingerSwipeThreshold (dominant axis) —
-///                             nothing fires yet; the commit happens at lift
-///   FourArmed → tap        : silent lift within FourFingerTapMaxMs with little movement →
-///                             synthesized Ctrl+Alt+Shift+Tab (reverse persistent switcher)
-///   FourSwiping : tracks the centroid; when the gesture ends (fingers leave / count drops /
-///                 stillness beyond FourFingerLiftMs) the TOTAL displacement decides: below the
-///                 threshold = canceled (swiping back undoes the switch, native semantics),
-///                 otherwise switch desktop 1..3 times by displacement (Win+Ctrl+Left/Right,
-///                 native direction: right swipe = previous desktop)
+///   Resizing             : the finger AVERAGE delta drives the grabbed window edges 1:1
+///   Resizing  → Idle     : modifier released, fingers lifted / count changed, or input silence
 /// </summary>
 public class DragEngine {
     private enum State {
@@ -47,18 +38,24 @@ public class DragEngine {
         Armed,
         Dragging,
         Holding,
-        ResizeArmed,
-        Resizing,
-        FourArmed,
-        FourSwiping
+        Resizing
     }
 
     private const int TrustDelayMs = 40; // a contact must persist this long before its movement counts
+    private const int RegrabWindowMs = 400; // after a silence release of a window move, a re-landed chord resumes this quickly
+    private const int RegrabSlackUnits = 3; // movement still required to resume (instead of the full start threshold)
     private const int ResizeSilenceMs = 180; // the pad stops reporting when fingers hold still; a pause must not end a resize
 
     private readonly AppConfig _config;
+    private readonly IGestureHost _host;
     private State _state = State.Idle;
-    private bool _altMode; // Alt held at drag start: move the window under the cursor instead of pressing a button
+    private bool _windowMove; // the current drag moves the window under the cursor instead of pressing a button
+    private bool _aspectMasked; // the lock key's release was already masked during this resize
+    private bool _needModifier; //the gesture was armed through the modifier chord and ends when the key is released
+    private ModifierKey _modifier;
+
+    private int _armedFingers;
+    private GestureAction _armedAction;
 
     private TouchpadContact[] _prevContacts = Array.Empty<TouchpadContact>();
     private long _prevTime;
@@ -68,68 +65,95 @@ public class DragEngine {
     private readonly List<int> _staleIds = new(); // scratch buffer for UpdateTrust
 
     private float _armedMovement;
+    private long _regrabUntil;
 
     private long _holdStartTime;
     private TouchpadContact? _holdSinglePrev;
 
-    // Four-finger gesture bookkeeping (swipe/tap recognition).
-    private readonly Dictionary<int, (float x, float y)> _fourAnchors = new();
-    private float _fourAnchorX, _fourAnchorY; // centroid at gesture start
-    private float _fourCurrentX;              // latest centroid X (commit-at-lift evaluation)
-    private long _fourStartTime;
-    private float _fourMaxMove;               // largest per-finger displacement from its anchor
-    private bool _tapCandidate;               // partial lift: maybe a tap, confirmed by silence
-    private long _tapCandidateStart;
-    private float _tapCandidateMove;
-
-    public DragEngine(AppConfig config) {
+    public DragEngine(AppConfig config, IGestureHost host) {
         _config = config;
+        _host = host;
     }
 
+    /// <summary>True while a gesture is in progress or the host still animates (coalesced window update pending): the app should tick fast.</summary>
+    public bool NeedsFastTick => _state != State.Idle || _host.Busy;
+
+    /// <summary>Current state name (diagnostics and tests).</summary>
+    public string StateName => _state.ToString();
+
+    private bool ModifierHeld => _host.IsKeyDown(_modifier);
+
     /// <summary>
-    /// Alt mode must track the physical Alt key for the whole gesture: releasing Alt
+    /// A modifier gesture must track the physical key for its whole life: releasing it
     /// immediately drops the window (ending the drag), so the remaining fingers fall back
     /// to normal system behavior (e.g. two-finger scroll) instead of stacking on top of it.
     /// </summary>
-    private bool EndAltDragIfAltReleased() {
-        if (!_altMode || AltWindowDragger.IsAltDown()) return false;
-        Logger.Log("engine: alt released → end window drag");
+    private bool EndWindowDragIfModifierReleased() {
+        if (!_windowMove || !_needModifier || ModifierHeld) return false;
+        Logger.Log("engine: modifier released → end window drag");
         ReleaseDragPress();
-        _state = State.Idle;
-        ResetQuarantine();
+        ToIdle();
         return true;
     }
 
+    // A modifier window move that ended only because the pad went quiet (finger adjustment) can be
+    // picked up again almost instantly: the re-armed chord needs just a few units of movement.
+    private void ArmRegrab(long now) {
+        if (_windowMove && _needModifier) _regrabUntil = now + RegrabWindowMs;
+    }
+
+    private void ToIdle() {
+        _state = State.Idle;
+        ResetQuarantine();
+    }
+
     private void StartDragPress() {
-        bool altDown = AltWindowDragger.IsAltDown();
-        _altMode = _config.AltWindowDrag && altDown;
-        Logger.Log($"engine: drag press (alt detected: {altDown}, alt mode: {_altMode})");
-        if (_altMode && AltWindowDragger.Start()) return; // the window follows the cursor directly
-        _altMode = false;
-        MouseInjector.ButtonDown(_config.DragButton);
+        bool windowAction = _armedAction == GestureAction.MoveWindow;
+        Logger.Log($"engine: drag press (action {_armedAction}, fingers {_armedFingers})");
+        _windowMove = false;
+        if (windowAction && _host.WindowMoveStart()) {
+            _windowMove = true;
+            if (_needModifier && _modifier is ModifierKey.Win or ModifierKey.Alt) _host.MaskKeyRelease();
+            return; // the window follows the cursor directly
+        }
+        // Plain Drag, or no movable window under the cursor (three fingers fall back to a normal button drag).
+        _needModifier = false;
+        _host.MouseButtonDown(_config.DragButton);
     }
 
     private void ReleaseDragPress() {
-        if (_altMode) AltWindowDragger.End();
-        else MouseInjector.ButtonUp(_config.DragButton);
+        if (_windowMove) _host.WindowMoveEnd();
+        else _host.MouseButtonUp(_config.DragButton);
+    }
+
+    private void EndResize() {
+        _host.WheelGuardOff();
+        _host.WindowResizeEnd();
     }
 
     public void ForceRelease() {
         if (_state is State.Dragging or State.Holding) {
             ReleaseDragPress();
             Logger.Log("engine: force release");
-        } else if (_state is State.ResizeArmed or State.Resizing) {
-            ScrollSuppressor.Remove();
-            AltWindowResizer.End();
+        } else if (_state == State.Resizing || (_state == State.Armed && _armedAction == GestureAction.ResizeWindow)) {
+            EndResize();
             Logger.Log("engine: force release resize");
         }
+        _host.WindowMoveEnd();
+        _regrabUntil = 0;
         _state = State.Idle;
         ResetQuarantine();
         _armedMovement = 0;
     }
 
+    private GestureAction ResolveAction(int fingers, bool modifierHeld) {
+        if (fingers == 3) return modifierHeld ? _config.ModifiedThreeFingerAction : _config.ThreeFingerAction;
+        if (fingers == 2 && modifierHeld) return _config.ModifiedTwoFingerAction;
+        return GestureAction.None;
+    }
+
     public void OnContacts(TouchpadContact[] contacts) {
-        long now = NativeMethods.NowMs();
+        long now = _host.NowMs();
         long gap = now - _prevTime;
         bool liftedGap = gap > _config.LiftedSilenceMs;
 
@@ -140,63 +164,27 @@ public class DragEngine {
                 // lifting) can fire as soon as the third finger lands, without waiting
                 // out the quarantine delay again.
                 UpdateTrust(contacts, now);
-                if (contacts.Length == 3) {
-                    Logger.Verbose("idle → armed");
-                    _state = State.Armed;
-                    _armedMovement = 0;
-                    _tapCandidate = false;
-                } else if (contacts.Length == 2 && _config.AltWindowResize && AltWindowDragger.IsAltDown()) {
-                    Logger.Verbose("idle → resize armed (alt + 2 fingers)");
-                    ScrollSuppressor.Install(); // from touchdown on, the window content must not scroll
-                    _state = State.ResizeArmed;
-                    _armedMovement = 0;
-                    _tapCandidate = false;
-                } else if (contacts.Length == 4 && _config.FourFingerGestures) {
-                    Logger.Verbose("idle → four armed");
-                    EnterFourArmed(contacts, now);
-                    _tapCandidate = false;
-                }
+                if (contacts.Length is 2 or 3) TryArm(contacts.Length);
                 break;
 
             case State.Armed:
-                if (liftedGap) {
-                    Logger.Verbose("armed → idle (lifted)");
-                    _state = State.Idle;
-                    ResetQuarantine();
-                    break;
-                }
-                if (contacts.Length == 3) {
-                    (bool found, float dx, float dy, float dist) = GetMaxTrustedDelta(contacts, now);
-                    if (found) _armedMovement += dist;
-                    if (_armedMovement >= _config.StartThreshold) {
-                        Logger.Log($"engine: start drag (movement {_armedMovement:F1} >= {_config.StartThreshold})");
-                        StartDragPress();
-                        _state = State.Dragging;
-                        if (found) {
-                            InjectDelta(dx, dy, gap);
-                            Logger.Log($"engine: first injected move ({dx:F1}, {dy:F1})");
-                        }
-                    }
-                } else {
-                    Logger.Verbose($"armed → idle (fingers={contacts.Length})");
-                    _state = State.Idle;
-                    ResetQuarantine();
-                }
+                OnArmed(contacts, now, gap, liftedGap);
                 break;
 
             case State.Dragging:
-                if (EndAltDragIfAltReleased()) break;
+                if (EndWindowDragIfModifierReleased()) break;
                 if (liftedGap) {
                     if (_config.HoldEnabled) {
                         Logger.Log("engine: fingers lifted → holding");
+                        if (_windowMove) _host.WindowMoveRelease(hold: true);
                         _state = State.Holding;
                         _holdStartTime = now;
                         _holdSinglePrev = null;
                     } else {
                         Logger.Log("engine: fingers lifted → release");
                         ReleaseDragPress();
-                        _state = State.Idle;
-                        ResetQuarantine();
+                        ArmRegrab(now);
+                        ToIdle();
                     }
                     break;
                 }
@@ -204,8 +192,7 @@ public class DragEngine {
                     // 4+ fingers is the system gesture namespace (e.g. desktop swipe): release cleanly.
                     Logger.Log("engine: 4+ fingers → release");
                     ReleaseDragPress();
-                    _state = State.Idle;
-                    ResetQuarantine();
+                    ToIdle();
                     break;
                 }
                 if (contacts.Length >= 2) {
@@ -218,21 +205,21 @@ public class DragEngine {
                 // contacts.Length == 1 && TakeoverWhenSingleFinger: the system cursor speed
                 // takes over movement while the button stays pressed (FastGestures behavior).
 
-                if (_altMode) AltWindowDragger.OnCursorMoved(); // also follows system-takeover moves
+                if (_windowMove) _host.WindowMoveUpdate(); // also follows system-takeover moves
                 break;
 
             case State.Holding:
-                if (EndAltDragIfAltReleased()) break;
+                if (EndWindowDragIfModifierReleased()) break;
                 if (contacts.Length >= 4) {
                     Logger.Log("engine: 4+ fingers during hold → release");
                     ReleaseDragPress();
-                    _state = State.Idle;
-                    ResetQuarantine();
+                    ToIdle();
                     break;
                 }
                 if (contacts.Length >= 2 && _config.HoldResumeEnabled) {
                     Logger.Log("engine: fingers back → resume drag");
                     ResetQuarantine(); // avoid a cursor jump from the old contact references
+                    if (_windowMove) _host.WindowMoveGrab();
                     _state = State.Dragging;
                 } else if (contacts.Length == 1) {
                     TouchpadContact contact = contacts[0];
@@ -241,108 +228,33 @@ public class DragEngine {
                         if (move > _config.HoldExitMoveThreshold) {
                             Logger.Log("engine: single finger move during hold → release");
                             ReleaseDragPress();
-                            _state = State.Idle;
-                            ResetQuarantine();
+                            ToIdle();
                         }
                     }
                     if (_state == State.Holding) _holdSinglePrev = contact;
                 }
                 break;
 
-            case State.ResizeArmed:
-                if (liftedGap || contacts.Length != 2 || !AltWindowDragger.IsAltDown()) {
-                    Logger.Verbose("resize armed → idle");
-                    ScrollSuppressor.Remove();
-                    _state = State.Idle;
-                    ResetQuarantine();
-                    break;
-                }
-                {
-                    // Alt+two-finger is a deliberate chord, so arming skips the 40ms trust
-                    // quarantine (startup latency); a landing-coordinate correction is absorbed
-                    // by clamping the per-frame delta instead.
-                    (bool found, float dx, float dy, float dist) = GetMaxMatchedDelta(contacts);
-                    if (found) _armedMovement += dist;
-                    if (_armedMovement >= _config.StartThreshold) {
-                        Logger.Log($"engine: start resize (movement {_armedMovement:F1} >= {_config.StartThreshold})");
-                        if (AltWindowResizer.Start(_config.AltResizeCenterPercent)) {
-                            _state = State.Resizing;
-                            ScrollSuppressor.SetOverrideCursor(AltWindowResizer.ZoneCursor);
-                            if (found) AltWindowResizer.OnDelta(dx * _config.AltResizeSpeed, dy * _config.AltResizeSpeed);
-                        } else {
-                            Logger.Log("engine: resize target invalid → idle");
-                            _state = State.Idle;
-                            ResetQuarantine();
-                        }
-                    }
-                }
-                break;
-
             case State.Resizing:
-                if (!AltWindowDragger.IsAltDown()) {
-                    Logger.Log("engine: alt released → end window resize");
-                    ScrollSuppressor.Remove();
-                    AltWindowResizer.End();
-                    _state = State.Idle;
-                    ResetQuarantine();
+                if (_needModifier && !ModifierHeld) {
+                    Logger.Log("engine: modifier released → end window resize");
+                    EndResize();
+                    ToIdle();
                     break;
                 }
-                if (gap > Math.Max(_config.LiftedSilenceMs, ResizeSilenceMs) || contacts.Length != 2) {
-                    // Finger count changed (3 = the drag can take over from Idle next frame) or fingers lifted.
+                if (gap > Math.Max(_config.LiftedSilenceMs, ResizeSilenceMs) || contacts.Length != _armedFingers) {
+                    // Finger count changed (a different chord can take over from Idle next frame) or fingers lifted.
                     Logger.Log("engine: resize end");
-                    ScrollSuppressor.Remove();
-                    AltWindowResizer.End();
-                    _state = State.Idle;
-                    ResetQuarantine();
+                    EndResize();
+                    ToIdle();
                     break;
                 }
                 {
-                    (bool found, float dx, float dy, float _) = GetMaxTrustedDelta(contacts, now);
+                    (bool found, float dx, float dy, float _) = GetAverageDelta(contacts, now, requireTrusted: true);
                     // After a pause the first frame only rebases: a lift + re-land within the silence
                     // window can reuse contact ids and would otherwise show up as a position jump.
-                    if (found && !liftedGap) AltWindowResizer.OnDelta(dx * _config.AltResizeSpeed, dy * _config.AltResizeSpeed);
+                    if (found && !liftedGap) ResizeBy(dx, dy);
                 }
-                break;
-
-            case State.FourArmed:
-                if (liftedGap) {
-                    // Fresh touchdown after a silence; the previous gesture's tap (if any) was
-                    // already evaluated by Tick during the silence.
-                    EnterFourArmed(contacts, now);
-                    break;
-                }
-                if (contacts.Length != 4) {
-                    // Partial lift: keep a tap candidate. The remaining fingers either lift soon
-                    // (silence confirms the tap) or continue as another gesture (any state entry clears it).
-                    _tapCandidate = true;
-                    _tapCandidateStart = _fourStartTime;
-                    _tapCandidateMove = _fourMaxMove;
-                    _state = State.Idle;
-                    break;
-                }
-                _fourMaxMove = MathF.Max(_fourMaxMove, UpdateFourAnchors(contacts));
-                {
-                    var (cx, cy) = Centroid(contacts);
-                    float dxn = cx - _fourAnchorX;
-                    if (MathF.Abs(dxn) >= _config.FourFingerSwipeThreshold &&
-                        MathF.Abs(dxn) > MathF.Abs(cy - _fourAnchorY) * 1.5f) {
-                        // Nothing fires yet — the commit happens at lift, so the user can still
-                        // swipe back below the threshold to cancel (native semantics).
-                        Logger.Verbose("four armed → swiping (commit at lift)");
-                        _fourCurrentX = cx;
-                        _state = State.FourSwiping;
-                    }
-                }
-                break;
-
-            case State.FourSwiping:
-                if (liftedGap) break; // fingers held still (pad stops reporting); Tick's stillness window decides
-                if (contacts.Length == 4) {
-                    _fourCurrentX = Centroid(contacts).x;
-                    break;
-                }
-                // Finger count dropped: a real lift is in progress — evaluate now.
-                FinishFourSwipe();
                 break;
         }
 
@@ -350,36 +262,124 @@ public class DragEngine {
         _prevTime = now;
     }
 
-    /// <summary>Called periodically to detect finger lift (input silence) and hold timeouts.</summary>
+    private void TryArm(int fingers) {
+        _modifier = _config.EffectiveModifier;
+        bool modifierHeld = _host.IsKeyDown(_modifier);
+        GestureAction action = ResolveAction(fingers, modifierHeld);
+        if (action == GestureAction.None) return;
+
+        _armedFingers = fingers;
+        _armedAction = action;
+        _needModifier = modifierHeld;
+        _armedMovement = 0;
+        if (action == GestureAction.MoveWindow && modifierHeld && fingers == 3 && _host.NowMs() < _regrabUntil)
+            _armedMovement = Math.Max(0, _config.StartThreshold - RegrabSlackUnits);
+        _regrabUntil = 0;
+        _state = State.Armed;
+        Logger.Verbose($"idle → armed ({fingers} fingers, {action}{(modifierHeld ? " + " + _modifier : "")})");
+        if (action == GestureAction.ResizeWindow)
+            _host.WheelGuardOn(); // from touchdown on, the window content must not scroll
+    }
+
+    private void OnArmed(TouchpadContact[] contacts, long now, long gap, bool liftedGap) {
+        bool resize = _armedAction == GestureAction.ResizeWindow;
+        if (liftedGap || contacts.Length != _armedFingers || (_needModifier && !ModifierHeld)) {
+            Logger.Verbose($"armed → idle (fingers={contacts.Length}, lifted={liftedGap})");
+            if (resize) _host.WheelGuardOff();
+            ToIdle();
+            return;
+        }
+
+        if (resize) {
+            // A modifier + fingers chord is deliberate, so arming skips the 40ms trust quarantine
+            // (startup latency); a landing-coordinate correction is absorbed by clamping the
+            // per-frame delta instead.
+            (bool found, float dx, float dy, float dist) = GetAverageDelta(contacts, now, requireTrusted: false, clamp: 25f);
+            if (found) _armedMovement += dist;
+            if (_armedMovement < _config.StartThreshold) return;
+
+            Logger.Log($"engine: start resize (movement {_armedMovement:F1} >= {_config.StartThreshold})");
+            if (_host.WindowResizeStart()) {
+                _state = State.Resizing;
+                _aspectMasked = false;
+                if (_needModifier && _modifier is ModifierKey.Win or ModifierKey.Alt) _host.MaskKeyRelease();
+                if (found) ResizeBy(dx, dy);
+            } else {
+                Logger.Log("engine: resize target invalid → idle");
+                _host.WheelGuardOff();
+                ToIdle();
+            }
+            return;
+        }
+
+        {
+            (bool found, float dx, float dy, float dist) = GetMaxTrustedDelta(contacts, now);
+            if (found) _armedMovement += dist;
+            if (_armedMovement < _config.StartThreshold) return;
+
+            Logger.Log($"engine: start drag (movement {_armedMovement:F1} >= {_config.StartThreshold})");
+            UpgradeLateModifier();
+            StartDragPress();
+            if (_armedAction == GestureAction.MoveWindow && !_windowMove && _armedFingers != 3) {
+                // A two-finger window move has no button-drag fallback.
+                ToIdle();
+                return;
+            }
+            _state = State.Dragging;
+            if (found) {
+                InjectDelta(dx, dy, gap);
+                Logger.Log($"engine: first injected move ({dx:F1}, {dy:F1})");
+            }
+        }
+    }
+
+    /// <summary>Pressing the modifier after the fingers landed still gets the modified three-finger action
+    /// (Alt may be pressed just before or just after touching down).</summary>
+    private void UpgradeLateModifier() {
+        if (_needModifier || _armedFingers != 3 || !ModifierHeld) return;
+        GestureAction modified = _config.ModifiedThreeFingerAction;
+        if (modified is GestureAction.MoveWindow or GestureAction.Drag) {
+            _armedAction = modified;
+            _needModifier = true;
+        }
+    }
+
+    private void ResizeBy(float dx, float dy) {
+        bool lockAspect = _config.ResizeAspectLock &&
+                          _config.AspectLockKey != _modifier &&
+                          _host.IsKeyDown(_config.AspectLockKey);
+        if (lockAspect && !_aspectMasked) {
+            // Alt+Shift / Ctrl+Shift switch the input language when released with no other key in
+            // between; one inert key event while both are held cancels that.
+            _aspectMasked = true;
+            _host.MaskKeyRelease();
+        }
+        _host.WindowResizeDelta(dx * _config.AltResizeSpeed, dy * _config.AltResizeSpeed, lockAspect);
+    }
+
+    /// <summary>Called periodically to detect finger lift (input silence), hold timeouts and host animation.</summary>
     public void Tick() {
-        long now = NativeMethods.NowMs();
-        if (_state is State.Dragging or State.Holding && EndAltDragIfAltReleased()) return;
+        long now = _host.NowMs();
+        _host.Tick();
+        if (_state is State.Dragging or State.Holding && EndWindowDragIfModifierReleased()) return;
         switch (_state) {
             case State.Idle:
-                // A partial lift left a tap candidate; silence confirms that the fingers really left.
-                if (_tapCandidate && now - _prevTime > _config.LiftedSilenceMs) {
-                    if (_prevTime - _tapCandidateStart <= _config.FourFingerTapMaxMs &&
-                        _tapCandidateMove <= _config.FourFingerTapTolerance) {
-                        Logger.Log("engine: 4-finger tap (after partial lift) → reverse task switcher");
-                        KeyInjector.ReverseTaskSwitcher();
-                    }
-                    _tapCandidate = false;
-                }
                 break;
 
             case State.Dragging:
-                if (_altMode) AltWindowDragger.OnCursorMoved(); // covers system-takeover frames without WM_INPUT
+                if (_windowMove) _host.WindowMoveUpdate(); // covers system-takeover frames without WM_INPUT
                 if (now - _prevTime > _config.LiftedSilenceMs) {
                     if (_config.HoldEnabled) {
                         Logger.Log("engine: input silent → holding");
+                        if (_windowMove) _host.WindowMoveRelease(hold: true);
                         _state = State.Holding;
                         _holdStartTime = now;
                         _holdSinglePrev = null;
                     } else {
                         Logger.Log("engine: input silent → release");
                         ReleaseDragPress();
-                        _state = State.Idle;
-                        ResetQuarantine();
+                        ArmRegrab(now);
+                        ToIdle();
                     }
                 }
                 break;
@@ -387,100 +387,22 @@ public class DragEngine {
             case State.Holding when now - _holdStartTime > _config.HoldTimeMs:
                 Logger.Log("engine: hold timeout → release");
                 ReleaseDragPress();
-                _state = State.Idle;
-                ResetQuarantine();
+                ToIdle();
                 break;
 
             case State.Resizing:
                 // Wider than the drag's silence window: the pad stops reporting when the fingers
                 // hold still, and a mid-gesture finger adjustment must not drop the resize.
-                if (!AltWindowDragger.IsAltDown() || now - _prevTime > Math.Max(_config.LiftedSilenceMs, ResizeSilenceMs)) {
-                    Logger.Log(!AltWindowDragger.IsAltDown()
-                        ? "engine: alt released → end window resize"
+                bool modifierGone = _needModifier && !ModifierHeld;
+                if (modifierGone || now - _prevTime > Math.Max(_config.LiftedSilenceMs, ResizeSilenceMs)) {
+                    Logger.Log(modifierGone
+                        ? "engine: modifier released → end window resize"
                         : "engine: input silent → end window resize");
-                    ScrollSuppressor.Remove();
-                    AltWindowResizer.End();
-                    _state = State.Idle;
-                    ResetQuarantine();
-                }
-                break;
-
-            case State.FourArmed:
-                if (now - _prevTime > _config.LiftedSilenceMs) {
-                    if (_prevTime - _fourStartTime <= _config.FourFingerTapMaxMs &&
-                        _fourMaxMove <= _config.FourFingerTapTolerance) {
-                        Logger.Log("engine: 4-finger tap → reverse task switcher");
-                        KeyInjector.ReverseTaskSwitcher();
-                    }
-                    _state = State.Idle;
-                    ResetQuarantine();
-                }
-                break;
-
-            case State.FourSwiping:
-                // Stillness window: on this pad a stationary hand stops the reports, so silence is
-                // ambiguous (holding vs lifted). Holding longer than this commits at the held position.
-                if (now - _prevTime > Math.Max(_config.LiftedSilenceMs, _config.FourFingerLiftMs)) {
-                    Logger.Verbose("engine: four-finger stillness → commit");
-                    FinishFourSwipe();
+                    EndResize();
+                    ToIdle();
                 }
                 break;
         }
-    }
-
-    // ---------- Four-finger swipe/tap recognition ----------
-
-    /// <summary>Commits the swipe: the total displacement at gesture end decides whether (and how
-    /// many times) to switch desktops — swiping back below the threshold cancels, native direction
-    /// (right swipe = previous desktop).</summary>
-    private void FinishFourSwipe() {
-        float total = _fourCurrentX - _fourAnchorX;
-        if (MathF.Abs(total) >= _config.FourFingerSwipeThreshold) {
-            int count = Math.Clamp((int)(MathF.Abs(total) / _config.FourFingerSwipeStride), 1, 3);
-            Logger.Log($"engine: 4-finger swipe committed ({total:F0}) → {(total > 0 ? "previous" : "next")} desktop" +
-                       (count > 1 ? $" ×{count}" : ""));
-            for (int i = 0; i < count; i++) KeyInjector.SwitchDesktop(total < 0);
-        } else {
-            Logger.Verbose("engine: 4-finger swipe canceled (returned before lift)");
-        }
-        _tapCandidate = false;
-        _state = State.Idle;
-        ResetQuarantine();
-    }
-
-    private void EnterFourArmed(TouchpadContact[] contacts, long now) {
-        _state = State.FourArmed;
-        _fourStartTime = now;
-        _fourAnchors.Clear();
-        foreach (var c in contacts) _fourAnchors[c.ContactId] = (c.X, c.Y);
-        var (x, y) = Centroid(contacts);
-        _fourAnchorX = x;
-        _fourAnchorY = y;
-        _fourCurrentX = x;
-        _fourMaxMove = 0;
-    }
-
-    /// <summary>Records anchors for newly seen contacts and returns the largest displacement seen this frame.</summary>
-    private float UpdateFourAnchors(TouchpadContact[] contacts) {
-        float max = 0;
-        foreach (var c in contacts) {
-            if (_fourAnchors.TryGetValue(c.ContactId, out var a)) {
-                float d = MathF.Sqrt((c.X - a.x) * (c.X - a.x) + (c.Y - a.y) * (c.Y - a.y));
-                if (d > max) max = d;
-            } else {
-                _fourAnchors[c.ContactId] = (c.X, c.Y);
-            }
-        }
-        return max;
-    }
-
-    private static (float x, float y) Centroid(TouchpadContact[] contacts) {
-        float sx = 0, sy = 0;
-        foreach (var c in contacts) {
-            sx += c.X;
-            sy += c.Y;
-        }
-        return (sx / contacts.Length, sy / contacts.Length);
     }
 
     // ---------- Movement calculation (quarantine + max delta, from ThreeFingerDragOnWindows) ----------
@@ -514,30 +436,37 @@ public class DragEngine {
         return (best.found, best.dx, best.dy, bestDist);
     }
 
-    /// <summary>Like GetMaxTrustedDelta but ignores the trust quarantine, and clamps each frame's
-    /// delta so a landing-coordinate correction (first report vs second) cannot fake movement.
-    /// Used for resize arming where the 40ms quarantine would be pure startup latency.</summary>
-    private (bool found, float dx, float dy, float dist) GetMaxMatchedDelta(TouchpadContact[] contacts) {
-        const float clamp = 25f;
-        UpdateTrust(contacts, NativeMethods.NowMs()); // keep the bookkeeping consistent
+    /// <summary>Average per-finger movement over the contacts matched with the previous frame. With
+    /// <paramref name="requireTrusted"/> only quarantine-cleared contacts count; with a positive
+    /// <paramref name="clamp"/> each finger's frame delta is capped so a landing-coordinate correction
+    /// (first report vs second) cannot fake movement. <c>dist</c> is the length of the average.</summary>
+    private (bool found, float dx, float dy, float dist) GetAverageDelta(TouchpadContact[] contacts, long now, bool requireTrusted, float clamp = 0f) {
+        UpdateTrust(contacts, now);
 
-        float bestDist = 0;
-        (bool found, float dx, float dy, float dist) best = (false, 0, 0, 0);
-
+        float sumX = 0, sumY = 0;
+        int count = 0;
         foreach (var contact in contacts) {
+            if (requireTrusted && !_trusted.Contains(contact.ContactId)) continue;
             foreach (var prev in _prevContacts) {
                 if (prev.ContactId != contact.ContactId) continue;
-                float dist = contact.GetDist2D(prev);
-                if (dist > bestDist) {
-                    float scale = dist > clamp ? clamp / dist : 1f;
-                    bestDist = dist;
-                    best = (true, (contact.X - prev.X) * scale, (contact.Y - prev.Y) * scale, MathF.Min(dist, clamp));
+                float dx = contact.X - prev.X, dy = contact.Y - prev.Y;
+                if (clamp > 0) {
+                    float dist = MathF.Sqrt(dx * dx + dy * dy);
+                    if (dist > clamp) {
+                        dx *= clamp / dist;
+                        dy *= clamp / dist;
+                    }
                 }
+                sumX += dx;
+                sumY += dy;
+                count++;
                 break;
             }
         }
 
-        return best;
+        if (count == 0) return (false, 0, 0, 0);
+        float ax = sumX / count, ay = sumY / count;
+        return (true, ax, ay, MathF.Sqrt(ax * ax + ay * ay));
     }
 
     private void UpdateTrust(TouchpadContact[] contacts, long now) {
@@ -580,7 +509,8 @@ public class DragEngine {
 
     private void InjectDelta(float dx, float dy, long elapsedMs) {
         (float x, float y) = ComputeScaled(dx, dy, elapsedMs);
-        MouseInjector.ShiftCursorPosition(x, y);
+        if (_windowMove) _host.WindowMoveDelta(x, y);
+        else _host.MoveCursor(x, y);
     }
 
     /// <summary>Speed factor + acceleration curve (from ThreeFingerDragOnWindows DistanceManager).</summary>

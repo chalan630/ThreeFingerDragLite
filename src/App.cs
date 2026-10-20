@@ -24,7 +24,26 @@ public class App : IDisposable {
 
     public App(AppConfig config) {
         _config = config;
-        _engine = new DragEngine(config);
+        _engine = new DragEngine(config, new Win32GestureHost(config));
+    }
+
+    private const uint FastTickMs = 16;
+    private const uint IdleTickMs = 30;
+    private uint _tickMs = IdleTickMs;
+
+    private void UpdateTimer() {
+        uint wanted = _engine.NeedsFastTick ? FastTickMs : IdleTickMs;
+        if (wanted == _tickMs) return;
+        _tickMs = wanted;
+        SetTimer(_hwnd, (IntPtr)1, wanted, IntPtr.Zero);
+    }
+
+    private void ReregisterInput(string reason) {
+        _engine.ForceRelease();
+        _assembler.Reset();
+        TouchpadHelper.InvalidatePreparsedCache();
+        bool ok = TouchpadHelper.RegisterInput(_hwnd);
+        Logger.Log($"raw input re-registered ({reason}): {ok}, touchpad exists: {TouchpadHelper.Exists()}");
     }
 
     public int Run() {
@@ -58,7 +77,8 @@ public class App : IDisposable {
         if (touchpadExists && !registered) return 1;
 
         _trayIcon = new TrayIcon(_hwnd, _config, ApplyConfig, Quit);
-        SetTimer(_hwnd, (IntPtr)1, 30, IntPtr.Zero);
+        Notifier.Sink = _trayIcon.ShowBalloon;
+        SetTimer(_hwnd, (IntPtr)1, _tickMs, IntPtr.Zero);
 
         // Self-test: prove that THIS process can inject input at all (sandbox/integrity probe).
         RunInjectionSelfTest();
@@ -94,17 +114,33 @@ public class App : IDisposable {
                             Logger.Verbose("contacts: " + string.Join(", ", frame));
                         _engine.OnContacts(frame);
                     }
+                    UpdateTimer();
                     break;
                 }
 
                 case WM_INPUT_DEVICE_CHANGE:
                     Logger.Log($"Touchpad device change (wParam={wParam}), exists={TouchpadHelper.Exists()}");
-                    if (wParam == (IntPtr)2 /* GIDC_REMOVAL */) TouchpadHelper.InvalidatePreparsedCache();
+                    if (wParam == (IntPtr)GIDC_REMOVAL) {
+                        _engine.ForceRelease();
+                        _assembler.Reset();
+                        TouchpadHelper.InvalidatePreparsedCache();
+                    } else if (wParam == (IntPtr)GIDC_ARRIVAL) {
+                        // Registering with RIDEV_DEVNOTIFY itself raises arrival notices, so never
+                        // re-register here (feedback loop); the registration covers new devices already.
+                        _assembler.Reset();
+                        TouchpadHelper.InvalidatePreparsedCache();
+                    }
+                    break;
+
+                case WM_POWERBROADCAST:
+                    if (wParam == (IntPtr)PBT_APMRESUMEAUTOMATIC || wParam == (IntPtr)PBT_APMRESUMESUSPEND)
+                        ReregisterInput("resume from sleep");
                     break;
 
                 case WM_TIMER:
                     if (!_config.Enabled) _engine.ForceRelease();
                     else _engine.Tick();
+                    UpdateTimer();
                     break;
 
                 case WM_APP_TRAY:
@@ -157,16 +193,16 @@ public class App : IDisposable {
         _config.HoldTimeMs = fresh.HoldTimeMs;
         _config.HoldResumeEnabled = fresh.HoldResumeEnabled;
         _config.TakeoverWhenSingleFinger = fresh.TakeoverWhenSingleFinger;
-        _config.AltWindowDrag = fresh.AltWindowDrag;
-        _config.AltWindowResize = fresh.AltWindowResize;
+        _config.GestureModifier = fresh.GestureModifier;
+        _config.ThreeFingerAction = fresh.ThreeFingerAction;
+        _config.ModifiedThreeFingerAction = fresh.ModifiedThreeFingerAction;
+        _config.ModifiedTwoFingerAction = fresh.ModifiedTwoFingerAction;
+        _config.EdgeDock = fresh.EdgeDock;
+        _config.ResizeAspectLock = fresh.ResizeAspectLock;
+        _config.AspectLockKey = fresh.AspectLockKey;
+        _config.ResizeSyncToRefresh = fresh.ResizeSyncToRefresh;
         _config.AltResizeCenterPercent = fresh.AltResizeCenterPercent;
         _config.AltResizeSpeed = fresh.AltResizeSpeed;
-        _config.FourFingerGestures = fresh.FourFingerGestures;
-        _config.FourFingerSwipeThreshold = fresh.FourFingerSwipeThreshold;
-        _config.FourFingerSwipeStride = fresh.FourFingerSwipeStride;
-        _config.FourFingerTapMaxMs = fresh.FourFingerTapMaxMs;
-        _config.FourFingerTapTolerance = fresh.FourFingerTapTolerance;
-        _config.FourFingerLiftMs = fresh.FourFingerLiftMs;
         _config.LiftedSilenceMs = fresh.LiftedSilenceMs;
         _config.HoldExitMoveThreshold = fresh.HoldExitMoveThreshold;
 

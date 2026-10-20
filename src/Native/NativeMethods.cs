@@ -297,6 +297,10 @@ internal static partial class NativeMethods {
     public const int MOUSEEVENTF_VIRTUALDESK = 0x4000;
 
     [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll")]
     public static extern int GetSystemMetrics(int nIndex);
     public const int SM_XVIRTUALSCREEN = 76;
     public const int SM_YVIRTUALSCREEN = 77;
@@ -393,16 +397,14 @@ internal static partial class NativeMethods {
     public const uint TPM_RIGHTBUTTON = 0x0002;
     public const uint TPM_RETURNCMD = 0x0100;
 
-    // ---------- Keyboard chord injection (four-finger system gestures) ----------
+    // ---------- Keyboard injection ----------
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint SendInput(uint nInputs, INPUTK[] pInputs, int cbSize);
 
     public const ushort VK_SHIFT = 0x10;
     public const ushort VK_CONTROL = 0x11;
-    public const ushort VK_TAB = 0x09;
     public const ushort VK_LWIN = 0x5B;
-    public const ushort VK_LEFT = 0x25;
-    public const ushort VK_RIGHT = 0x27;
+    public const ushort VK_RWIN = 0x5C;
 
     // ---------- Alt window dragging ----------
     [DllImport("user32.dll")]
@@ -485,6 +487,38 @@ internal static partial class NativeMethods {
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsZoomed(IntPtr hwnd);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+    public const uint MONITOR_DEFAULTTONULL = 0;
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfoW(IntPtr monitor, ref MONITORINFO info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPLACEMENT {
+        public int length;
+        public uint flags;
+        public uint showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT rcNormalPosition;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowPlacement(IntPtr hwnd, ref WINDOWPLACEMENT placement);
+    public const uint SW_SHOWMAXIMIZED = 3;
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindow(IntPtr hwnd);
@@ -509,6 +543,72 @@ internal static partial class NativeMethods {
     public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
     public static readonly IntPtr PerMonitorAwareV2 = new(-4);
+
+    // ---------- Window queries ----------
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassNameW(IntPtr hwnd, [Out] char[] lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetDC(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    public static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    public static extern int GetDeviceCaps(IntPtr hdc, int index);
+    public const int VREFRESH = 116;
+
+    [DllImport("dwmapi.dll", EntryPoint = "DwmGetWindowAttribute")]
+    public static extern int DwmGetWindowAttributeRect(IntPtr hwnd, int attr, out RECT value, int cbAttribute);
+    public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SendMessageTimeoutW(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+    public const uint WS_EX_NOREDIRECTIONBITMAP = 0x00200000;
+
+    // ---------- Integrity (UIPI) probing ----------
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentProcessId();
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess, [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, out int tokenInformation, int tokenInformationLength, out int returnLength);
+
+    [DllImport("kernel32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+    public const uint TOKEN_QUERY = 0x0008;
+    public const int TokenElevation = 20;
+    public const int ERROR_ACCESS_DENIED = 5;
+
+    // ---------- Power / device notifications ----------
+    public const uint WM_POWERBROADCAST = 0x0218;
+    public const int PBT_APMRESUMESUSPEND = 7;
+    public const int PBT_APMRESUMEAUTOMATIC = 0x12;
+    public const int GIDC_ARRIVAL = 1;
+    public const int GIDC_REMOVAL = 2;
+
+    public const uint NIF_INFO = 0x00000010;
+    public const uint NIIF_INFO = 0x00000001;
 
     public static long NowMs() => Environment.TickCount64;
 }

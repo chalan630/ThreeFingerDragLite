@@ -10,6 +10,8 @@ ThreeFingerDragLite/
 ├── app.ico                          # 程序图标（原创，由 tools/IconGen 生成）
 ├── tools/
 │   └── IconGen/                     # 图标生成器（GDI+ 绘制多尺寸并打包 ICO，可改参数重新生成）
+├── tests/
+│   └── ReplayTests/                 # 零依赖控制台测试：假宿主 + 手动时钟跑 DragEngine，可回放 VerboseLog
 └── src/
     ├── Program.cs                   # 入口：DPI 感知、单实例互斥、加载配置、启动 App
     ├── App.cs                       # 隐藏窗口 + 消息循环：Raw Input 分发、定时器、注入自检
@@ -23,10 +25,14 @@ ThreeFingerDragLite/
     │   └── ContactAssembler.cs      # 把"部分触点报告"拼装成完整帧
     ├── Engine/
     │   ├── DragEngine.cs            # 核心：手势状态机（本项目的心脏）
-    │   ├── MouseInjector.cs         # SendInput：按键注入 + 带小数累积的相对移动
-    │   ├── KeyInjector.cs           # SendInput：键盘和弦合成（切桌面/切换器热键）
-    │   ├── AltWindowDragger.cs      # Alt+三指：直接移动光标下的窗口（含共享的窗口解析）
-    │   └── AltWindowResizer.cs      # Alt+四指：定向改边调整窗口大小
+    │   ├── IGestureHost.cs          # 引擎的对外接缝（时钟/键盘状态/注入/窗口操作）
+    │   ├── Win32GestureHost.cs      # 真实宿主：委托给下面这些静态类
+    │   ├── MouseInjector.cs         # SendInput：按键注入 + 带小数累积的相对移动；绝对定位用 SetCursorPos（不过低级钩子），失败回退 SendInput
+    │   ├── KeyInjector.cs           # SendInput：键盘注入自检、Win 修饰键抵消开始菜单
+    │   ├── AltWindowDragger.cs      # 修饰键+三指：增量驱动光标与窗口（异步合并提交、边缘即时贴靠、窗口解析与提权检测）
+    │   ├── AltWindowResizer.cs      # 修饰键+双指：九宫格缩放（宽高比、刷新率对齐、DPI 最小尺寸）
+    │   ├── WindowProbe.cs           # 可见边框、DPI、提权、慢窗口、刷新率
+    │   └── Notifier.cs              # 限频托盘气泡
     └── Ui/
         └── TrayIcon.cs              # 托盘图标 + 菜单（含参数子菜单、置灰联动）
 ```
@@ -46,10 +52,12 @@ ThreeFingerDragLite/
     ▼
  DragEngine.OnContacts ─────── 状态机判定
     │                            │
-    │            普通模式         │           Alt 模式（拖动开始时按住 Alt）
+    ▼  IGestureHost（测试时换成假宿主）
+ Win32GestureHost
+    │            Drag 动作        │        MoveWindow / ResizeWindow 动作
     ▼                            ▼
- MouseInjector              AltWindowDragger
- (SendInput 左键+移动)       (SetWindowPos 直接移动窗口)
+ MouseInjector              AltWindowDragger / AltWindowResizer
+ (SendInput 左键+移动)       (SetWindowPos 直接改窗口，含宽高比)
 ```
 
 **线程模型**：整个程序是单线程 Win32 消息循环（`GetMessage`/`DispatchMessage`）。Raw Input、定时器、托盘菜单回调全部在同一线程——这意味着所有状态（引擎、缓存、注入缓冲）都不需要锁。新增代码请保持"只在 UI 线程触碰状态"的约定。
@@ -64,13 +72,13 @@ Idle ──恰好3指落下──▶ Armed ──累计移动≥StartThreshold�
                                                              └──(系统移动光标,按键保持)
 ```
 
-**指数路由**：**恰好 3 指**属于拖动手势；**4 指的归属由 Alt 与接管开关决定**——按住 Alt 且 `AltWindowResize` = 窗口缩放，无 Alt 且 `FourFingerGestures` 开启 = 横滑切桌面（合成 Win+Ctrl+方向键）/ 四指点按（合成 Ctrl+Alt+Shift+Tab），两者都未启用时完整让给系统手势（此时系统"四指手势"应保持开启）。任何进行中的拖动/保持遇到 4+ 指立即干净释放。键盘合成走 `KeyInjector`（独立 INPUTK 结构，与鼠标注入互不影响）。
+**和弦路由**：（指数, 修饰键是否按住）经配置映射到动作。默认 3 指 = Drag；修饰键+3 指 = MoveWindow；修饰键+2 指 = ResizeWindow（`ThreeFingerAction` / `ModifiedThreeFingerAction` / `ModifiedTwoFingerAction`，可选 Drag/MoveWindow/ResizeWindow/None）。4+ 指完整让给系统手势；进行中的拖动/保持遇到 4+ 指立即干净释放。缩放走独立的 Resizing 状态（取参与手指的平均增量），其余动作共用 Dragging/Holding。
 
 关键机制：
 
 - **渐进触发**：Idle 状态下每帧都维护 trust 记录（`UpdateTrust`），所以"先单指移动、再补两指"时原来那根手指已是 trusted，第三指落下立即累计移动、无隔离等待。这是与原版 ThreeFingerDragOnWindows 手感差异的核心。
 - **隔离区（quarantine）**：新出现的触点 40ms（`TrustDelayMs`）内不参与位移计算，防止手指落板瞬间的坐标跳变传给光标。
-- **Alt 模式生命周期**：只在拖动开始时采样进入，但全程跟踪——`EndAltDragIfAltReleased()` 在 Dragging/Holding 每帧和 Tick 里检查，松开 Alt 立即放下窗口回到 Idle。
+- **修饰键模式生命周期**：武装时采样修饰键，但全程跟踪——`EndWindowDragIfModifierReleased()` 在 Dragging/Holding 每帧和 Tick 里检查，松开修饰键立即放下窗口回到 Idle；武装后才按下的修饰键会把三指手势升级为窗口手势。
 - **静默判定**：触控板在手指静止时可能停发报文（本机 Synaptics 实测如此），用"超过 `LiftedSilenceMs` 无报文"判定全部抬离；WM_TIMER（30ms）兜底检测，不依赖新帧到来。
 
 ## 4. 互操作陷阱清单（血泪史，二次开发必读）
@@ -97,6 +105,10 @@ Idle ──恰好3指落下──▶ Armed ──累计移动≥StartThreshold�
 | 慢速精细移动不够稳 | `Acceleration` 调低或 0 关闭加速 |
 
 托盘菜单已内置这些档位；`配置说明.txt` 有完整中文说明。
+
+## 5b. 测试
+
+`dotnet run --project tests/ReplayTests -c Release`：无 NuGet 依赖的控制台测试。`FakeHost` 实现 `IGestureHost`（手动时钟、可设按键状态、事件日志），场景覆盖拖动/保持/续拖、4 指忽略、修饰键移窗与升级、缩放平均增量/停顿/无效目标/宽高比、映射自定义。附加参数传入 `VerboseLog` 生成的 `log.txt` 时，按时间戳回放其中的 `contacts:` 行并打印状态转移。窗口 API 层（DPI、SetWindowPos）仍只能实机验证。
 
 ## 6. 调试技巧
 

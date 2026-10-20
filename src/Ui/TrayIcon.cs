@@ -9,18 +9,29 @@ public class TrayIcon : IDisposable {
     private const uint MenuEnable = 1;
     private const uint MenuHold = 2;
     private const uint MenuTakeover = 3;
-    private const uint MenuAltDrag = 4;
-    private const uint MenuAltResize = 8;
-    private const uint MenuFourGestures = 9;
     private const uint MenuOpenFolder = 5;
     private const uint MenuReload = 6;
     private const uint MenuQuit = 7;
+    private const uint MenuAspectLock = 11;
+    private const uint MenuSyncRefresh = 12;
+    private const uint MenuAcceleration = 13;
 
     // Value pickers: command id = base + index (98/99 reserved for "current value" info entries).
     private const uint HoldBase = 100;
     private const uint ButtonBase = 200;
     private const uint SpeedBase = 300;
     private const uint ThresholdBase = 400;
+    private const uint ModifierBase = 500;
+    private const uint ThreeActionBase = 600;
+    private const uint ModThreeActionBase = 700;
+    private const uint ModTwoActionBase = 800;
+    private const uint ResizeSpeedBase = 900;
+
+    private static readonly string[] ModifierLabels = { "Alt（默认）", "Ctrl", "Shift", "Win" };
+    private static readonly string[] ActionLabels = { "关闭", "模拟鼠标拖动", "移动窗口", "调整窗口大小" };
+
+    private static readonly int[] ResizeSpeedValues = { 1, 2, 3, 4, 6 };
+    private static readonly string[] ResizeSpeedLabels = { "1 倍（与手指 1:1）", "2 倍", "3 倍（默认）", "4 倍", "6 倍" };
 
     private static readonly int[] HoldValues = { 500, 1000, 1500, 2000, 3000 };
     private static readonly string[] HoldLabels = { "0.5 秒", "1 秒（默认）", "1.5 秒", "2 秒", "3 秒" };
@@ -57,10 +68,21 @@ public class TrayIcon : IDisposable {
             uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP,
             uCallbackMessage = NativeMethods.WM_APP_TRAY,
             hIcon = _hIcon != IntPtr.Zero ? _hIcon : LoadIconW(IntPtr.Zero, (IntPtr)32512 /* IDI_APPLICATION */),
-            szTip = $"ThreeFingerDragLite v{version} — 三指拖动 · Alt+三指移动窗口"
+            szTip = $"ThreeFingerDragLite v{version} — 三指拖动 · 修饰键+三指移动窗口 · 修饰键+双指缩放"
         };
         _added = Shell_NotifyIconW(NIM_ADD, ref _data);
         if (!_added) Logger.Log("Failed to add tray icon. Error: " + Marshal.GetLastWin32Error());
+    }
+
+    /// <summary>Shows a tray balloon notice (used for problems the user can act on, e.g. an elevated target window).</summary>
+    public void ShowBalloon(string title, string message) {
+        if (!_added) return;
+        var data = _data;
+        data.uFlags = NIF_INFO;
+        data.szInfoTitle = title.Length > 63 ? title[..63] : title;
+        data.szInfo = message.Length > 255 ? message[..255] : message;
+        data.dwInfoFlags = NIIF_INFO;
+        Shell_NotifyIconW(NIM_MODIFY, ref data);
     }
 
     private static IntPtr LoadAppIcon() {
@@ -96,13 +118,24 @@ public class TrayIcon : IDisposable {
         AppendChecked(menu, MenuHold, _config.HoldEnabled, "拖动状态保持");
         AppendChoices(menu, HoldBase, "保持时长", HoldValues, HoldLabels, _config.HoldTimeMs, $"{_config.HoldTimeMs} 毫秒", _config.HoldEnabled);
         AppendChecked(menu, MenuTakeover, _config.TakeoverWhenSingleFinger, "单指系统接管");
-        AppendChecked(menu, MenuAltDrag, _config.AltWindowDrag, "Alt+三指移动窗口");
-        AppendChecked(menu, MenuAltResize, _config.AltWindowResize, "Alt+双指调整窗口大小");
-        AppendChecked(menu, MenuFourGestures, _config.FourFingerGestures, "四指手势（横滑切桌面·点按切换器）");
+        AppendMenuW(menu, MF_SEPARATOR, IntPtr.Zero, "");
+
+        IntPtr window = CreatePopupMenu();
+        string mod = ModifierLabels[(int)_config.EffectiveModifier];
+        AppendChoices(window, ModifierBase, "手势修饰键", IndexValues(ModifierLabels.Length), ModifierLabels, (int)_config.EffectiveModifier, mod, true);
+        AppendChoices(window, ThreeActionBase, "三指（无修饰键）", IndexValues(ActionLabels.Length), ActionLabels, (int)_config.ThreeFingerAction, ActionLabels[(int)_config.ThreeFingerAction], true);
+        AppendChoices(window, ModThreeActionBase, "修饰键 + 三指", IndexValues(ActionLabels.Length), ActionLabels, (int)_config.ModifiedThreeFingerAction, ActionLabels[(int)_config.ModifiedThreeFingerAction], true);
+        AppendChoices(window, ModTwoActionBase, "修饰键 + 双指", IndexValues(ActionLabels.Length), ActionLabels, (int)_config.ModifiedTwoFingerAction, ActionLabels[(int)_config.ModifiedTwoFingerAction], true);
+        AppendMenuW(window, MF_SEPARATOR, IntPtr.Zero, "");
+        AppendChoices(window, ResizeSpeedBase, "缩放速度", ResizeSpeedValues, ResizeSpeedLabels, _config.AltResizeSpeed, $"{_config.AltResizeSpeed} 倍", true);
+        AppendChecked(window, MenuAspectLock, _config.ResizeAspectLock, "缩放时 Shift 锁定宽高比");
+        AppendChecked(window, MenuSyncRefresh, _config.ResizeSyncToRefresh, "缩放对齐显示器刷新率");
+        AppendMenuW(menu, MF_POPUP | (uint)(_config.Enabled ? 0 : MF_GRAYED), window, "窗口手势");
         AppendMenuW(menu, MF_SEPARATOR, IntPtr.Zero, "");
 
         AppendChoices(menu, ButtonBase, "拖动按键", IndexValues(ButtonLabels.Length), ButtonLabels, (int)_config.DragButton, ButtonLabels[(int)_config.DragButton], _config.Enabled);
         AppendChoices(menu, SpeedBase, "光标速度", SpeedValues, SpeedLabels, _config.Speed, $"速度 {_config.Speed}", _config.Enabled);
+        AppendChecked(menu, MenuAcceleration, _config.Acceleration != 0, "指针加速度");
         AppendChoices(menu, ThresholdBase, "触发灵敏度", ThresholdValues, ThresholdLabels, _config.StartThreshold, $"阈值 {_config.StartThreshold}", _config.Enabled);
         AppendMenuW(menu, MF_SEPARATOR, IntPtr.Zero, "");
 
@@ -130,19 +163,17 @@ public class TrayIcon : IDisposable {
                 _config.TakeoverWhenSingleFinger = !_config.TakeoverWhenSingleFinger;
                 SaveAndApply();
                 break;
-            case MenuAltDrag:
-                _config.AltWindowDrag = !_config.AltWindowDrag;
+            case MenuAspectLock:
+                _config.ResizeAspectLock = !_config.ResizeAspectLock;
                 SaveAndApply();
                 break;
-            case MenuAltResize:
-                _config.AltWindowResize = !_config.AltWindowResize;
+            case MenuSyncRefresh:
+                _config.ResizeSyncToRefresh = !_config.ResizeSyncToRefresh;
                 SaveAndApply();
                 break;
-            case MenuFourGestures:
-                _config.FourFingerGestures = !_config.FourFingerGestures;
+            case MenuAcceleration:
+                _config.Acceleration = _config.Acceleration != 0 ? 0 : 10;
                 SaveAndApply();
-                if (_config.FourFingerGestures)
-                    Logger.Log("note: four-finger takeover enabled — set system four-finger gestures to None to avoid double triggers");
                 break;
             case MenuOpenFolder:
                 OpenConfigFolder();
@@ -168,6 +199,16 @@ public class TrayIcon : IDisposable {
             _config.Speed = SpeedValues[cmd - SpeedBase];
         } else if (cmd >= ThresholdBase && cmd < ThresholdBase + (uint)ThresholdValues.Length) {
             _config.StartThreshold = ThresholdValues[cmd - ThresholdBase];
+        } else if (cmd >= ModifierBase && cmd < ModifierBase + (uint)ModifierLabels.Length) {
+            _config.GestureModifier = (ModifierKey)(cmd - ModifierBase);
+        } else if (cmd >= ThreeActionBase && cmd < ThreeActionBase + (uint)ActionLabels.Length) {
+            _config.ThreeFingerAction = (GestureAction)(cmd - ThreeActionBase);
+        } else if (cmd >= ModThreeActionBase && cmd < ModThreeActionBase + (uint)ActionLabels.Length) {
+            _config.ModifiedThreeFingerAction = (GestureAction)(cmd - ModThreeActionBase);
+        } else if (cmd >= ModTwoActionBase && cmd < ModTwoActionBase + (uint)ActionLabels.Length) {
+            _config.ModifiedTwoFingerAction = (GestureAction)(cmd - ModTwoActionBase);
+        } else if (cmd >= ResizeSpeedBase && cmd < ResizeSpeedBase + (uint)ResizeSpeedValues.Length) {
+            _config.AltResizeSpeed = ResizeSpeedValues[cmd - ResizeSpeedBase];
         } else {
             return; // informational "current value" entries
         }

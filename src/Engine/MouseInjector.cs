@@ -23,8 +23,11 @@ public static class MouseInjector {
 
     /// <summary>Sets the cursor to an absolute virtual-desktop coordinate. Absolute moves bypass
     /// pointer ballistics ("Enhance pointer precision"), so the cursor lands exactly where
-    /// commanded — used during Alt gestures where the window must track the input 1:1.</summary>
+    /// commanded — used during Alt gestures where the window must track the input 1:1.
+    /// SetCursorPos is synchronous and skips the low-level mouse hooks every SendInput passes
+    /// through (a slow hook in any other tool stalls the input thread); SendInput is the fallback.</summary>
     public static void SetCursorAbsolute(int x, int y) {
+        if (SetCursorPos(x, y)) return;
         int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
         int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
         int vw = Math.Max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1);

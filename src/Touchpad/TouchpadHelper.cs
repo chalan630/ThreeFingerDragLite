@@ -21,11 +21,27 @@ public static class TouchpadHelper {
     private static IntPtr _preparsedCacheDevice = IntPtr.Zero;
     private static bool _fallbackLogged;
 
-    /// <summary>Call on WM_INPUT_DEVICE_CHANGE removal so a re-attached device never matches a stale cached handle.</summary>
+    /// <summary>Call on device removal/arrival and after resume from sleep so a re-attached device never matches a stale cached handle.</summary>
     public static void InvalidatePreparsedCache() {
         if (_preparsedCache != IntPtr.Zero) Marshal.FreeHGlobal(_preparsedCache);
         _preparsedCache = IntPtr.Zero;
         _preparsedCacheDevice = IntPtr.Zero;
+        _valueCapsCache = null;
+    }
+
+    // Report layout is fixed per preparsed buffer: resolve and sort it once, not on every report.
+    private static HIDP_VALUE_CAPS[]? _valueCapsCache;
+    private static IntPtr _valueCapsFor = IntPtr.Zero;
+
+    private static HIDP_VALUE_CAPS[]? GetSortedValueCaps(IntPtr preparsed) {
+        if (_valueCapsCache != null && _valueCapsFor == preparsed) return _valueCapsCache;
+        if (HidP_GetCaps(preparsed, out var caps) != HIDP_STATUS_SUCCESS) return null;
+        ushort length = caps.NumberInputValueCaps;
+        var valueCaps = new HIDP_VALUE_CAPS[length];
+        if (HidP_GetValueCaps(HidP_Input, valueCaps, ref length, preparsed) != HIDP_STATUS_SUCCESS) return null;
+        _valueCapsCache = valueCaps.OrderBy(x => x.LinkCollection).ToArray();
+        _valueCapsFor = preparsed;
+        return _valueCapsCache;
     }
 
     public static bool Exists() {
@@ -98,6 +114,7 @@ public static class TouchpadHelper {
                 if (GetRawInputDeviceInfo(hDevice, RIDI_PREPARSEDDATA, buffer, ref size) != unchecked((uint)-1) &&
                     HidP_GetCaps(buffer, out var caps) == HIDP_STATUS_SUCCESS &&
                     caps.UsagePage == UsagePageTouchpad && caps.Usage == UsageTouchpad) {
+                    InvalidatePreparsedCache();
                     _preparsedCache = buffer;
                     _preparsedCacheDevice = hDevice;
                     return buffer;
@@ -137,8 +154,9 @@ public static class TouchpadHelper {
                     Marshal.FreeHGlobal(buffer);
                     continue;
                 }
+                InvalidatePreparsedCache();
                 _preparsedCache = buffer;
-                _preparsedCacheDevice = candidate;
+                _preparsedCacheDevice = hDevice; // keyed by the requesting handle so later frames hit the cache
                 return buffer;
             }
             return IntPtr.Zero;
@@ -174,13 +192,8 @@ public static class TouchpadHelper {
             IntPtr preparsedPointer = GetPreparsedData(currentDevice);
             if (preparsedPointer == IntPtr.Zero) return (currentDevice, null, 0);
 
-            if (HidP_GetCaps(preparsedPointer, out var caps) != HIDP_STATUS_SUCCESS)
-                return (currentDevice, null, 0);
-
-            ushort valueCapsLength = caps.NumberInputValueCaps;
-            var valueCaps = new HIDP_VALUE_CAPS[valueCapsLength];
-            if (HidP_GetValueCaps(HidP_Input, valueCaps, ref valueCapsLength, preparsedPointer) != HIDP_STATUS_SUCCESS)
-                return (currentDevice, null, 0);
+            var valueCaps = GetSortedValueCaps(preparsedPointer);
+            if (valueCaps == null) return (currentDevice, null, 0);
 
             uint scanTime = 0;
             uint contactCount = 99;
@@ -192,7 +205,7 @@ public static class TouchpadHelper {
             try {
                 Marshal.Copy(rawHidRawData, 0, hidDataPointer, hidDataLength);
 
-                foreach (var valueCap in valueCaps.OrderBy(x => x.LinkCollection)) {
+                foreach (var valueCap in valueCaps) {
                     for (int contactIndex = 0; contactIndex < rawInput.Hid.dwCount; contactIndex++) {
                         IntPtr reportPointer = new IntPtr(hidDataPointer.ToInt64()
                             + (long)rawInput.Hid.dwSizeHid * contactIndex);
