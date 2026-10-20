@@ -400,6 +400,25 @@ internal static partial class NativeMethods {
     public static extern short GetAsyncKeyState(int vKey);
     public const int VK_MENU = 0x12;
 
+    // ---------- Scroll suppression during Alt+two-finger resize ----------
+    // WH_MOUSE_LL sees wheel messages synthesized from the touchpad before any app; returning 1
+    // from the hook swallows them so the resized window's content does not scroll.
+    public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookExW(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    public const int WH_MOUSE_LL = 14;
+    public const int WM_MOUSEWHEEL = 0x020A;
+    public const int WM_MOUSEHWHEEL = 0x020E;
+
     [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(POINT point);
 

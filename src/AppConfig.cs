@@ -36,9 +36,10 @@ public class AppConfig {
     /// AltSnap/AltDrag 不响应合成鼠标事件，模拟按键无法触发它们，所以这里改为直接移动窗口。</summary>
     public bool AltWindowDrag { get; set; } = true;
 
-    /// <summary>Alt + 四指拖动调整窗口大小（AltSnap 右键拖动语义）：光标落在窗口哪个象限，最近的
-    /// 横竖边就跟随光标移动，对边固定；最大化窗口先还原。绕开按键模拟直接调 API，无伴生输入。
-    /// 选四指而非双指：双指滚动无法在用户态拦截，四指路径天然干净（配合 FourFingerGestures 接管）。</summary>
+    /// <summary>Alt + 双指拖动调整窗口大小（AltSnap 右键拖动语义）：光标落在窗口哪个象限，最近的
+    /// 横竖边就跟随光标移动，对边固定；最大化窗口先还原。绕开按键模拟直接调 API。双指滚动虽无法在
+    /// 源头拦截，但手势期间会临时挂低级鼠标钩子吞掉滚轮消息（AltSnap 同款机制），绝大多数应用不会
+    /// 滚动；个别走 Pointer 原生通道的应用（UWP/WinUI 类）仍可能漏。</summary>
     public bool AltWindowResize { get; set; } = true;
 
     /// <summary>四指手势接管（默认关闭）：启用前先把系统"四指手势"设为"无"，否则会双重触发。
@@ -113,8 +114,9 @@ public class AppConfig {
                            拖动中只剩一根手指时交给系统光标速度继续拖（防抖动）
         AltWindowDrag      按住 Alt 三指拖动 = 直接移动光标下的窗口（AltSnap 兼容，
                            最大化窗口自动还原，松开 Alt 立即放下窗口）
-        AltWindowResize    按住 Alt 四指拖动 = 调整窗口大小（AltSnap 右键拖动语义：
-                           抓哪个象限动哪条边，最大化先还原）
+        AltWindowResize    按住 Alt 双指拖动 = 调整窗口大小（AltSnap 右键拖动语义：
+                           抓哪个象限动哪条边，最大化先还原）。手势期间自动吞掉滚轮
+                           消息防止内容滚动；个别 Pointer 原生应用（UWP 类）可能漏
         FourFingerGestures 四指手势接管（默认关）。启用前必须先把系统设置的”四指手势”
                            改为”无”，否则桌面切换会双重触发。接管内容：
                            横滑 = 切换上/下一个虚拟桌面；四指点按 = 反向任务切换器

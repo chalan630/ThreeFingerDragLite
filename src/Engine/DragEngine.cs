@@ -20,10 +20,11 @@ namespace ThreeFingerDragLite.Engine;
 ///   Holding   → Dragging : 2-3 fingers placed back within HoldTimeMs (re-grip continues the drag)
 ///   Holding   → Idle     : hold timeout, a single finger moves slightly (FastGestures exit gesture),
 ///                          or 4+ fingers land (clean release so system gestures take over)
-///   Idle    → ResizeArmed : Alt held + exactly 4 fingers (AltWindowResize enabled) — AltSnap-style
-///                           window resize, mirroring Alt+right-drag; only arms from Idle so a
-///                           hold-resume with 2 fingers keeps resuming the drag
-///   ResizeArmed → Resizing : trusted 4-finger movement reaches StartThreshold and a valid window
+///   Idle    → ResizeArmed : Alt held + exactly 2 fingers (AltWindowResize enabled) — AltSnap-style
+///                           window resize, mirroring Alt+right-drag; a gesture-scoped low-level
+///                           mouse hook swallows wheel events so the window content does not scroll;
+///                           only arms from Idle so a hold-resume with 2 fingers keeps resuming the drag
+///   ResizeArmed → Resizing : trusted 2-finger movement reaches StartThreshold and a valid window
 ///                            is under the cursor (otherwise back to Idle)
 ///   Resizing   : injects cursor deltas; the window edges nearest to the gesture-start cursor follow it
 ///   Resizing  → Idle      : Alt released, fingers lifted / count changed, or input silence
@@ -116,6 +117,7 @@ public class DragEngine {
             ReleaseDragPress();
             Logger.Log("engine: force release");
         } else if (_state is State.ResizeArmed or State.Resizing) {
+            ScrollSuppressor.Remove();
             AltWindowResizer.End();
             Logger.Log("engine: force release resize");
         }
@@ -141,8 +143,9 @@ public class DragEngine {
                     _state = State.Armed;
                     _armedMovement = 0;
                     _tapCandidate = false;
-                } else if (contacts.Length == 4 && _config.AltWindowResize && AltWindowDragger.IsAltDown()) {
-                    Logger.Verbose("idle → resize armed (alt + 4 fingers)");
+                } else if (contacts.Length == 2 && _config.AltWindowResize && AltWindowDragger.IsAltDown()) {
+                    Logger.Verbose("idle → resize armed (alt + 2 fingers)");
+                    ScrollSuppressor.Install(); // from touchdown on, the window content must not scroll
                     _state = State.ResizeArmed;
                     _armedMovement = 0;
                     _tapCandidate = false;
@@ -245,8 +248,9 @@ public class DragEngine {
                 break;
 
             case State.ResizeArmed:
-                if (liftedGap || contacts.Length != 4 || !AltWindowDragger.IsAltDown()) {
+                if (liftedGap || contacts.Length != 2 || !AltWindowDragger.IsAltDown()) {
                     Logger.Verbose("resize armed → idle");
+                    ScrollSuppressor.Remove();
                     _state = State.Idle;
                     ResetQuarantine();
                     break;
@@ -274,14 +278,16 @@ public class DragEngine {
             case State.Resizing:
                 if (!AltWindowDragger.IsAltDown()) {
                     Logger.Log("engine: alt released → end window resize");
+                    ScrollSuppressor.Remove();
                     AltWindowResizer.End();
                     _state = State.Idle;
                     ResetQuarantine();
                     break;
                 }
-                if (liftedGap || contacts.Length != 4) {
+                if (liftedGap || contacts.Length != 2) {
                     // Finger count changed (3 = the drag can take over from Idle next frame) or fingers lifted.
                     Logger.Log("engine: resize end");
+                    ScrollSuppressor.Remove();
                     AltWindowResizer.End();
                     _state = State.Idle;
                     ResetQuarantine();
@@ -386,6 +392,7 @@ public class DragEngine {
                     Logger.Log(!AltWindowDragger.IsAltDown()
                         ? "engine: alt released → end window resize"
                         : "engine: input silent → end window resize");
+                    ScrollSuppressor.Remove();
                     AltWindowResizer.End();
                     _state = State.Idle;
                     ResetQuarantine();

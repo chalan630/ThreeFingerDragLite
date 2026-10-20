@@ -97,7 +97,7 @@ public class TrayIcon : IDisposable {
         AppendChoices(menu, HoldBase, "保持时长", HoldValues, HoldLabels, _config.HoldTimeMs, $"{_config.HoldTimeMs} 毫秒", _config.HoldEnabled);
         AppendChecked(menu, MenuTakeover, _config.TakeoverWhenSingleFinger, "单指系统接管");
         AppendChecked(menu, MenuAltDrag, _config.AltWindowDrag, "Alt+三指移动窗口");
-        AppendChecked(menu, MenuAltResize, _config.AltWindowResize, "Alt+四指调整窗口大小");
+        AppendChecked(menu, MenuAltResize, _config.AltWindowResize, "Alt+双指调整窗口大小");
         AppendChecked(menu, MenuFourGestures, _config.FourFingerGestures, "四指手势（横滑切桌面·点按切换器）");
         AppendMenuW(menu, MF_SEPARATOR, IntPtr.Zero, "");
 
