@@ -265,6 +265,23 @@ internal static partial class NativeMethods {
         public IntPtr dwExtraInfo;
     }
 
+    // Keyboard variant of the SendInput INPUT struct (kept separate from the mouse one so the
+    // mouse injection path stays untouched).
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KEYBDINPUT {
+        public ushort wVk;
+        public ushort wScan;
+        public int dwFlags;
+        public int time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct INPUTK {
+        public int type;
+        public KEYBDINPUT ki;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT {
         public int X;
@@ -272,6 +289,8 @@ internal static partial class NativeMethods {
     }
 
     public const int INPUT_MOUSE = 0;
+    public const int INPUT_KEYBOARD = 1;
+    public const int KEYEVENTF_KEYUP = 0x0002;
     public const int MOUSEEVENTF_MOVE = 0x0001;
     public const int MOUSEEVENTF_LEFTDOWN = 0x0002;
     public const int MOUSEEVENTF_LEFTUP = 0x0004;
@@ -362,6 +381,17 @@ internal static partial class NativeMethods {
     public const uint MF_GRAYED = 0x00000001;
     public const uint TPM_RIGHTBUTTON = 0x0002;
     public const uint TPM_RETURNCMD = 0x0100;
+
+    // ---------- Keyboard chord injection (four-finger system gestures) ----------
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint SendInput(uint nInputs, INPUTK[] pInputs, int cbSize);
+
+    public const ushort VK_SHIFT = 0x10;
+    public const ushort VK_CONTROL = 0x11;
+    public const ushort VK_TAB = 0x09;
+    public const ushort VK_LWIN = 0x5B;
+    public const ushort VK_LEFT = 0x25;
+    public const ushort VK_RIGHT = 0x27;
 
     // ---------- Alt window dragging ----------
     [DllImport("user32.dll")]

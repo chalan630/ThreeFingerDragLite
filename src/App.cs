@@ -157,6 +157,12 @@ public class App : IDisposable {
         _config.HoldResumeEnabled = fresh.HoldResumeEnabled;
         _config.TakeoverWhenSingleFinger = fresh.TakeoverWhenSingleFinger;
         _config.AltWindowDrag = fresh.AltWindowDrag;
+        _config.AltWindowResize = fresh.AltWindowResize;
+        _config.FourFingerGestures = fresh.FourFingerGestures;
+        _config.FourFingerSwipeThreshold = fresh.FourFingerSwipeThreshold;
+        _config.FourFingerSwipeStride = fresh.FourFingerSwipeStride;
+        _config.FourFingerTapMaxMs = fresh.FourFingerTapMaxMs;
+        _config.FourFingerTapTolerance = fresh.FourFingerTapTolerance;
         _config.LiftedSilenceMs = fresh.LiftedSilenceMs;
         _config.HoldExitMoveThreshold = fresh.HoldExitMoveThreshold;
 

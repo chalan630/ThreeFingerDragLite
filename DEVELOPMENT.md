@@ -22,9 +22,11 @@ ThreeFingerDragLite/
     │   ├── TouchpadHelper.cs        # Raw Input 注册、HID 报文解析、preparsed 缓存
     │   └── ContactAssembler.cs      # 把"部分触点报告"拼装成完整帧
     ├── Engine/
-    │   ├── DragEngine.cs            # 核心：四态手势状态机（本项目的心脏）
+    │   ├── DragEngine.cs            # 核心：手势状态机（本项目的心脏）
     │   ├── MouseInjector.cs         # SendInput：按键注入 + 带小数累积的相对移动
-    │   └── AltWindowDragger.cs      # Alt 模式：直接移动光标下的窗口
+    │   ├── KeyInjector.cs           # SendInput：键盘和弦合成（切桌面/切换器热键）
+    │   ├── AltWindowDragger.cs      # Alt+三指：直接移动光标下的窗口（含共享的窗口解析）
+    │   └── AltWindowResizer.cs      # Alt+四指：定向改边调整窗口大小
     └── Ui/
         └── TrayIcon.cs              # 托盘图标 + 菜单（含参数子菜单、置灰联动）
 ```
@@ -62,7 +64,7 @@ Idle ──恰好3指落下──▶ Armed ──累计移动≥StartThreshold�
                                                              └──(系统移动光标,按键保持)
 ```
 
-**指数路由**：恰好 3 指属于本工具；**≥4 指属于系统手势命名空间**（四指横滑切桌面等）——四指永远不武装手势，任何进行中的拖动/保持遇到 4+ 指立即干净释放（抬按键/放窗口），把输入完整让给系统手势。
+**指数路由**：**恰好 3 指**属于拖动手势；**4 指的归属由 Alt 与接管开关决定**——按住 Alt 且 `AltWindowResize` = 窗口缩放，无 Alt 且 `FourFingerGestures` 开启 = 横滑切桌面（合成 Win+Ctrl+方向键）/ 四指点按（合成 Ctrl+Alt+Shift+Tab），两者都未启用时完整让给系统手势（此时系统"四指手势"应保持开启）。任何进行中的拖动/保持遇到 4+ 指立即干净释放。键盘合成走 `KeyInjector`（独立 INPUTK 结构，与鼠标注入互不影响）。
 
 关键机制：
 

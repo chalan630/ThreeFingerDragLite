@@ -10,6 +10,8 @@ public class TrayIcon : IDisposable {
     private const uint MenuHold = 2;
     private const uint MenuTakeover = 3;
     private const uint MenuAltDrag = 4;
+    private const uint MenuAltResize = 8;
+    private const uint MenuFourGestures = 9;
     private const uint MenuOpenFolder = 5;
     private const uint MenuReload = 6;
     private const uint MenuQuit = 7;
@@ -95,6 +97,8 @@ public class TrayIcon : IDisposable {
         AppendChoices(menu, HoldBase, "保持时长", HoldValues, HoldLabels, _config.HoldTimeMs, $"{_config.HoldTimeMs} 毫秒", _config.HoldEnabled);
         AppendChecked(menu, MenuTakeover, _config.TakeoverWhenSingleFinger, "单指系统接管");
         AppendChecked(menu, MenuAltDrag, _config.AltWindowDrag, "Alt+三指移动窗口");
+        AppendChecked(menu, MenuAltResize, _config.AltWindowResize, "Alt+四指调整窗口大小");
+        AppendChecked(menu, MenuFourGestures, _config.FourFingerGestures, "四指手势（横滑切桌面·点按切换器）");
         AppendMenuW(menu, MF_SEPARATOR, IntPtr.Zero, "");
 
         AppendChoices(menu, ButtonBase, "拖动按键", IndexValues(ButtonLabels.Length), ButtonLabels, (int)_config.DragButton, ButtonLabels[(int)_config.DragButton], _config.Enabled);
@@ -129,6 +133,16 @@ public class TrayIcon : IDisposable {
             case MenuAltDrag:
                 _config.AltWindowDrag = !_config.AltWindowDrag;
                 SaveAndApply();
+                break;
+            case MenuAltResize:
+                _config.AltWindowResize = !_config.AltWindowResize;
+                SaveAndApply();
+                break;
+            case MenuFourGestures:
+                _config.FourFingerGestures = !_config.FourFingerGestures;
+                SaveAndApply();
+                if (_config.FourFingerGestures)
+                    Logger.Log("note: four-finger takeover enabled — set system four-finger gestures to None to avoid double triggers");
                 break;
             case MenuOpenFolder:
                 OpenConfigFolder();

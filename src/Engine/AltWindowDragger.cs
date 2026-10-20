@@ -26,21 +26,7 @@ public static class AltWindowDragger {
         _active = false;
         _hwnd = IntPtr.Zero;
 
-        if (!GetCursorPos(out POINT cursor)) return false;
-        IntPtr hwnd = WindowFromPoint(cursor);
-        if (hwnd == IntPtr.Zero) return false;
-        hwnd = GetAncestor(hwnd, GA_ROOT);
-        if (hwnd == IntPtr.Zero || hwnd == GetDesktopWindow() || hwnd == GetShellWindow()) return false;
-        if (!IsWindow(hwnd)) return false;
-        if (DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return false;
-
-        if (IsZoomed(hwnd)) {
-            // Match AltSnap behavior: restore the window first, then drag the restored window.
-            SendMessageW(hwnd, WM_SYSCOMMAND, (IntPtr)SC_RESTORE, IntPtr.Zero);
-            if (IsZoomed(hwnd)) return false; // app restored asynchronously; dragging a zoomed window is messy
-        }
-
-        if (!GetWindowRect(hwnd, out RECT rect)) return false;
+        if (!TryResolveTarget(out IntPtr hwnd, out RECT rect, out POINT cursor)) return false;
 
         _hwnd = hwnd;
         _startCursorX = cursor.X;
@@ -49,6 +35,35 @@ public static class AltWindowDragger {
         _startTop = rect.top;
         _active = true;
         Logger.Log($"alt-drag: tracking window 0x{hwnd:X}");
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the resize/drag target: the root window under the cursor, excluding the desktop,
+    /// the shell and cloaked (UWP-suspended) windows. A maximized window is restored first
+    /// (matching AltSnap behavior); if the app restores asynchronously the target is rejected.
+    /// Shared by AltWindowDragger and AltWindowResizer.
+    /// </summary>
+    internal static bool TryResolveTarget(out IntPtr hwnd, out RECT rect, out POINT cursor) {
+        hwnd = IntPtr.Zero;
+        rect = default;
+        cursor = default;
+
+        if (!GetCursorPos(out cursor)) return false;
+        IntPtr h = WindowFromPoint(cursor);
+        if (h == IntPtr.Zero) return false;
+        h = GetAncestor(h, GA_ROOT);
+        if (h == IntPtr.Zero || h == GetDesktopWindow() || h == GetShellWindow()) return false;
+        if (!IsWindow(h)) return false;
+        if (DwmGetWindowAttribute(h, DWMWA_CLOAKED, out int cloaked, sizeof(int)) == 0 && cloaked != 0) return false;
+
+        if (IsZoomed(h)) {
+            SendMessageW(h, WM_SYSCOMMAND, (IntPtr)SC_RESTORE, IntPtr.Zero);
+            if (IsZoomed(h)) return false;
+        }
+
+        if (!GetWindowRect(h, out rect)) return false;
+        hwnd = h;
         return true;
     }
 

@@ -36,6 +36,28 @@ public class AppConfig {
     /// AltSnap/AltDrag 不响应合成鼠标事件，模拟按键无法触发它们，所以这里改为直接移动窗口。</summary>
     public bool AltWindowDrag { get; set; } = true;
 
+    /// <summary>Alt + 四指拖动调整窗口大小（AltSnap 右键拖动语义）：光标落在窗口哪个象限，最近的
+    /// 横竖边就跟随光标移动，对边固定；最大化窗口先还原。绕开按键模拟直接调 API，无伴生输入。
+    /// 选四指而非双指：双指滚动无法在用户态拦截，四指路径天然干净（配合 FourFingerGestures 接管）。</summary>
+    public bool AltWindowResize { get; set; } = true;
+
+    /// <summary>四指手势接管（默认关闭）：启用前先把系统"四指手势"设为"无"，否则会双重触发。
+    /// 接管内容：横滑切换虚拟桌面（合成 Win+Ctrl+方向键）、四指点按打开反向任务切换器
+    /// （合成 Ctrl+Alt+Shift+Tab）。Alt+四指拖动则是窗口缩放（见 AltWindowResize）。</summary>
+    public bool FourFingerGestures { get; set; } = false;
+
+    /// <summary>四指横滑触发切换桌面的累计位移（触控板原始单位）。越小越灵敏。</summary>
+    public int FourFingerSwipeThreshold { get; set; } = 60;
+
+    /// <summary>横滑持续时每累计多少位移再切换一个桌面（连续切换步长）。</summary>
+    public int FourFingerSwipeStride { get; set; } = 120;
+
+    /// <summary>四指点按的最长按住时长（毫秒），超过视为非点按。</summary>
+    public int FourFingerTapMaxMs { get; set; } = 300;
+
+    /// <summary>四指点按允许的最大指位移（触控板原始单位），超过视为滑动。</summary>
+    public int FourFingerTapTolerance { get; set; } = 25;
+
     /// <summary>判定"手指已全部抬离"的输入静默时长（毫秒）。触控板持续上报约每 8~15ms 一帧。</summary>
     public int LiftedSilenceMs { get; set; } = 60;
 
@@ -87,13 +109,25 @@ public class AppConfig {
                            拖动中只剩一根手指时交给系统光标速度继续拖（防抖动）
         AltWindowDrag      按住 Alt 三指拖动 = 直接移动光标下的窗口（AltSnap 兼容，
                            最大化窗口自动还原，松开 Alt 立即放下窗口）
+        AltWindowResize    按住 Alt 四指拖动 = 调整窗口大小（AltSnap 右键拖动语义：
+                           抓哪个象限动哪条边，最大化先还原）
+        FourFingerGestures 四指手势接管（默认关）。启用前必须先把系统设置的”四指手势”
+                           改为”无”，否则桌面切换会双重触发。接管内容：
+                           横滑 = 切换上/下一个虚拟桌面；四指点按 = 反向任务切换器
 
         ── 进阶（一般不用改）───────────────────────
 
-        HoldResumeEnabled  保持期间放回至少两根手指即可继续拖动
+        HoldResumeEnabled  保持期间放回至少两根手指即可继续拖
         LiftedSilenceMs    输入静默多久判定“手指已全部抬离”（默认 60 毫秒）
         HoldExitMoveThreshold
                            保持期间单指移动超过该距离即结束拖动（默认 5）
+        FourFingerSwipeThreshold
+                           四指横滑触发切桌面的累计位移（默认 60，越小越灵敏）
+        FourFingerSwipeStride
+                           横滑持续时每多少位移再切一个桌面（默认 120）
+        FourFingerTapMaxMs 四指点按最长按住时长（默认 300 毫秒）
+        FourFingerTapTolerance
+                           四指点按允许的最大指位移（默认 25，超过算滑动）
         Acceleration       指针加速度，10 为标准（0 关闭）。与 macOS 手感相关的曲线
         Logging            写运行日志（log.txt，出错排查用）
         VerboseLog         记录每一帧触点数据（日志量很大，仅排查用）
