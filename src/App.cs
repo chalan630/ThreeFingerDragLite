@@ -98,6 +98,7 @@ public class App : IDisposable {
 
                 case WM_INPUT_DEVICE_CHANGE:
                     Logger.Log($"Touchpad device change (wParam={wParam}), exists={TouchpadHelper.Exists()}");
+                    if (wParam == (IntPtr)2 /* GIDC_REMOVAL */) TouchpadHelper.InvalidatePreparsedCache();
                     break;
 
                 case WM_TIMER:

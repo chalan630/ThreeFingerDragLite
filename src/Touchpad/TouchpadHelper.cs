@@ -21,6 +21,13 @@ public static class TouchpadHelper {
     private static IntPtr _preparsedCacheDevice = IntPtr.Zero;
     private static bool _fallbackLogged;
 
+    /// <summary>Call on WM_INPUT_DEVICE_CHANGE removal so a re-attached device never matches a stale cached handle.</summary>
+    public static void InvalidatePreparsedCache() {
+        if (_preparsedCache != IntPtr.Zero) Marshal.FreeHGlobal(_preparsedCache);
+        _preparsedCache = IntPtr.Zero;
+        _preparsedCacheDevice = IntPtr.Zero;
+    }
+
     public static bool Exists() {
         // Enumerate via a native buffer: marshaling a struct[] for this API proved unreliable,
         // while the raw IntPtr form returns real device handles.
