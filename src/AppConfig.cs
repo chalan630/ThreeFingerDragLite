@@ -42,6 +42,11 @@ public class AppConfig {
     /// 滚动；个别走 Pointer 原生通道的应用（UWP/WinUI 类）仍可能漏。</summary>
     public bool AltWindowResize { get; set; } = true;
 
+    /// <summary>Alt+双指缩放时窗口中央"全方向"区域的宽度（占窗口对应边 的百分比，0~100，
+    /// 对齐 AltSnap 的 CenterFraction=24）：光标落在中央区域内时四条边同时对称缩放；
+    /// 区域外抓最近的边。0 = 关闭中央模式，纯象限抓边。</summary>
+    public int AltResizeCenterPercent { get; set; } = 24;
+
     /// <summary>四指手势接管（默认关闭）：启用前先把系统"四指手势"设为"无"，否则会双重触发。
     /// 接管内容：横滑切换虚拟桌面（合成 Win+Ctrl+方向键）、四指点按打开反向任务切换器
     /// （合成 Ctrl+Alt+Shift+Tab）。Alt+四指拖动则是窗口缩放（见 AltWindowResize）。</summary>
@@ -114,9 +119,13 @@ public class AppConfig {
                            拖动中只剩一根手指时交给系统光标速度继续拖（防抖动）
         AltWindowDrag      按住 Alt 三指拖动 = 直接移动光标下的窗口（AltSnap 兼容，
                            最大化窗口自动还原，松开 Alt 立即放下窗口）
-        AltWindowResize    按住 Alt 双指拖动 = 调整窗口大小（AltSnap 右键拖动语义：
-                           抓哪个象限动哪条边，最大化先还原）。手势期间自动吞掉滚轮
-                           消息防止内容滚动；个别 Pointer 原生应用（UWP 类）可能漏
+        AltWindowResize    按住 Alt 双指拖动 = 调整窗口大小（AltSnap 右键拖动语义）。
+                           抓哪个象限动哪条边；落在中央区域（默认 24%，对齐
+                           AltSnap CenterFraction）时四条边同时对称缩放；最大化先
+                           还原；手势期间自动吞掉滚轮消息防止内容滚动（个别
+                           Pointer 原生应用可能漏）
+        AltResizeCenterPercent
+                           上述中央区域宽度百分比（0~100，0=关闭中央模式）
         FourFingerGestures 四指手势接管（默认关）。启用前必须先把系统设置的”四指手势”
                            改为”无”，否则桌面切换会双重触发。接管内容：
                            横滑 = 切换上/下一个虚拟桌面；四指点按 = 反向任务切换器
