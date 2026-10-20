@@ -1,0 +1,138 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace ThreeFingerDragLite;
+
+public class AppConfig {
+    /// <summary>总开关：启用三指拖动。</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>拖动按下的鼠标键：left / right / middle。</summary>
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public DragButton DragButton { get; set; } = DragButton.Left;
+
+    /// <summary>光标速度，120 为原版 ThreeFingerDragOnWindows 的中性值（乘以 Speed/120）。越大越快。</summary>
+    public int Speed { get; set; } = 120;
+
+    /// <summary>指针加速度，10 为中性值（内部 a = Acceleration/10，0 关闭）。Sigmoid 曲线：慢速精细、快速省力。</summary>
+    public int Acceleration { get; set; } = 10;
+
+    /// <summary>触发拖动所需的三指累计移动距离（触控板原始单位，约等于像素）。防止轻触/误触。</summary>
+    public int StartThreshold { get; set; } = 12;
+
+    /// <summary>拖动状态保持（FastGestures 特性）：所有手指抬离后按键不立即释放。</summary>
+    public bool HoldEnabled { get; set; } = true;
+
+    /// <summary>保持时长（毫秒）：全部手指抬离后经过该时长自动释放按键。</summary>
+    public int HoldTimeMs { get; set; } = 1000;
+
+    /// <summary>保持期间放回至少两根手指即可继续拖动。</summary>
+    public bool HoldResumeEnabled { get; set; } = true;
+
+    /// <summary>系统接管（FastGestures 特性）：拖动中只剩一根手指时，交给系统光标速度继续拖动，消除抖动。</summary>
+    public bool TakeoverWhenSingleFinger { get; set; } = true;
+
+    /// <summary>Alt 增强拖动（AltSnap 兼容）：按住 Alt 三指拖动时直接移动光标下的窗口，而不是模拟鼠标按键。
+    /// AltSnap/AltDrag 不响应合成鼠标事件，模拟按键无法触发它们，所以这里改为直接移动窗口。</summary>
+    public bool AltWindowDrag { get; set; } = true;
+
+    /// <summary>判定"手指已全部抬离"的输入静默时长（毫秒）。触控板持续上报约每 8~15ms 一帧。</summary>
+    public int LiftedSilenceMs { get; set; } = 60;
+
+    /// <summary>保持期间单指移动多少距离后结束拖动（FastGestures：单指轻微移动即结束）。</summary>
+    public int HoldExitMoveThreshold { get; set; } = 5;
+
+    /// <summary>写日志文件。</summary>
+    public bool Logging { get; set; } = true;
+
+    /// <summary>记录每一帧触点数据（排查用，日志量很大）。</summary>
+    public bool VerboseLog { get; set; } = false;
+
+    [JsonIgnore]
+    public static string Directory { get; } =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ThreeFingerDragLite");
+
+    [JsonIgnore]
+    public static string FilePath => Path.Combine(Directory, "config.json");
+
+    /// <summary>Writes the Chinese configuration reference next to config.json when missing.</summary>
+    public static void EnsureDocs() {
+        try {
+            string docsPath = Path.Combine(Directory, "配置说明.txt");
+            if (File.Exists(docsPath)) return;
+            System.IO.Directory.CreateDirectory(Directory);
+            File.WriteAllText(docsPath, DocsText, System.Text.Encoding.UTF8);
+        } catch {
+            // best-effort documentation
+        }
+    }
+
+    private const string DocsText = """
+        ThreeFingerDragLite 配置说明
+        ============================
+
+        配置文件：本目录下的 config.json。修改保存后，托盘菜单点“重新加载配置”生效
+        （或重启程序）。常用参数可直接在托盘菜单里点选，无需手改文件。
+
+        ── 常用（托盘菜单可直接调）─────────────────
+
+        Enabled            总开关。false = 完全禁用三指拖动
+        DragButton         拖动按下的鼠标键：Left / Middle / Right
+        Speed              光标速度，120 为标准值（实际乘 Speed/120）。越大越快
+        StartThreshold     触发灵敏度：三指累计移动多少才触发拖动（触控板原始单位）。
+                           数值越小越容易触发；误触多就调大（如 20、30）
+        HoldEnabled        拖动状态保持：手指全部抬离后按键不立即释放
+        HoldTimeMs         保持时长（毫秒）：抬手后多久自动释放（托盘可选 0.5~3 秒）
+        TakeoverWhenSingleFinger
+                           拖动中只剩一根手指时交给系统光标速度继续拖（防抖动）
+        AltWindowDrag      按住 Alt 三指拖动 = 直接移动光标下的窗口（AltSnap 兼容，
+                           最大化窗口自动还原，松开 Alt 立即放下窗口）
+
+        ── 进阶（一般不用改）───────────────────────
+
+        HoldResumeEnabled  保持期间放回至少两根手指即可继续拖动
+        LiftedSilenceMs    输入静默多久判定“手指已全部抬离”（默认 60 毫秒）
+        HoldExitMoveThreshold
+                           保持期间单指移动超过该距离即结束拖动（默认 5）
+        Acceleration       指针加速度，10 为标准（0 关闭）。与 macOS 手感相关的曲线
+        Logging            写运行日志（log.txt，出错排查用）
+        VerboseLog         记录每一帧触点数据（日志量很大，仅排查用）
+
+        ── 日志 ──────────────────────────────────
+
+        本目录 log.txt（超 1MB 自动轮转为 log.old.txt）。反馈问题时附上该文件。
+        """;
+
+
+    private static readonly JsonSerializerOptions SerializerOptions = new() {
+        WriteIndented = true,
+        IncludeFields = false
+    };
+
+    public static AppConfig Load() {
+        try {
+            if (File.Exists(FilePath)) {
+                var config = JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(FilePath), SerializerOptions);
+                if (config != null) return config;
+            }
+        } catch (Exception ex) {
+            Console.Error.WriteLine("Failed to load config: " + ex.Message);
+        }
+        return new AppConfig();
+    }
+
+    public void Save() {
+        try {
+            System.IO.Directory.CreateDirectory(Directory);
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, SerializerOptions));
+        } catch (Exception ex) {
+            Console.Error.WriteLine("Failed to save config: " + ex.Message);
+        }
+    }
+}
+
+public enum DragButton {
+    Left,
+    Right,
+    Middle
+}
