@@ -111,6 +111,6 @@ dotnet publish ThreeFingerDragLite.csproj -c Release -r win-x64 --self-contained
 
 [MIT License](LICENSE)。本项目为衍生作品，感谢：
 
-- [ClementGre/ThreeFingerDragOnWindows](https://github.com/ClementGre/ThreeFingerDragOnWindows)（MIT）——Raw Input/HID 触点解析、触点拼包、防跳变隔离、指针加速曲线与图标
+- [ClementGre/ThreeFingerDragOnWindows](https://github.com/ClementGre/ThreeFingerDragOnWindows)（MIT）——Raw Input/HID 触点解析、触点拼包、防跳变隔离、指针加速曲线
 - [emoacht/RawInput.Touchpad](https://github.com/emoacht/RawInput.Touchpad)（MIT）——上述项目的输入解析上游
 - [FastGestures / zhaokeli](https://fg.zhaokeli.com)——交互行为规格的公开文档

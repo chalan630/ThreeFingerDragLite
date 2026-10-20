@@ -12,6 +12,8 @@
     <Description>FastGestures-style three-finger drag for Windows precision touchpads, in a tiny standalone tray tool.</Description>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- tools/ 下是独立的辅助工程（如 IconGen），不参与主程序编译 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tools/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

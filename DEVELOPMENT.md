@@ -7,7 +7,9 @@
 ```
 ThreeFingerDragLite/
 ├── ThreeFingerDragLite.csproj      # net10.0 / WinExe / x64，无任何 NuGet 依赖
-├── app.ico                          # 程序图标（源自 ThreeFingerDragOnWindows，MIT）
+├── app.ico                          # 程序图标（原创，由 tools/IconGen 生成）
+├── tools/
+│   └── IconGen/                     # 图标生成器（GDI+ 绘制多尺寸并打包 ICO，可改参数重新生成）
 └── src/
     ├── Program.cs                   # 入口：DPI 感知、单实例互斥、加载配置、启动 App
     ├── App.cs                       # 隐藏窗口 + 消息循环：Raw Input 分发、定时器、注入自检
