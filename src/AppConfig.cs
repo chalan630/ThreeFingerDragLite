@@ -47,6 +47,10 @@ public class AppConfig {
     /// 最近的横边（高度），角落自然形成角缩放。0 = 关闭中央模式。</summary>
     public int AltResizeCenterPercent { get; set; } = 24;
 
+    /// <summary>Alt+双指缩放的速度倍率（1 = 与手指 1:1）。触控板原始单位密度约 120px/厘米，
+    /// 远低于常见鼠标（800dpi ≈ 300px/厘米），1:1 时同样幅度要滑 2~3 倍距离；默认 3 对齐鼠标手感。</summary>
+    public int AltResizeSpeed { get; set; } = 3;
+
     /// <summary>四指手势接管（默认关闭）：启用前先把系统"四指手势"设为"无"，否则会双重触发。
     /// 接管内容：横滑切换虚拟桌面（合成 Win+Ctrl+方向键）、四指点按打开反向任务切换器
     /// （合成 Ctrl+Alt+Shift+Tab）。Alt+四指拖动则是窗口缩放（见 AltWindowResize）。</summary>
@@ -127,6 +131,7 @@ public class AppConfig {
         AltResizeCenterPercent
                            中央"四边同缩"区域宽度百分比（0~100，0=关闭）；
                            左右部分只动宽度、上下部分只动高度、角落为角缩放
+        AltResizeSpeed    缩放速度倍率（默认 3，对齐鼠标手感；1=与手指 1:1）
         FourFingerGestures 四指手势接管（默认关）。启用前必须先把系统设置的”四指手势”
                            改为”无”，否则桌面切换会双重触发。接管内容：
                            横滑 = 切换上/下一个虚拟桌面；四指点按 = 反向任务切换器

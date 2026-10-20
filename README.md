@@ -64,6 +64,7 @@ Windows 精密触控板上的 macOS 式**三指拖动**，外加 **Alt + 三指�
   "AltWindowDrag": true,            // Alt+三指直接移动窗口
   "AltWindowResize": true,          // Alt+双指调整窗口大小（AltSnap 右键拖动语义，手势期间吞滚轮）
   "AltResizeCenterPercent": 24,     // 中央"四边同缩"区域占窗口的百分比（0=关闭）
+  "AltResizeSpeed": 3,              // 缩放速度倍率（默认 3 对齐鼠标手感，1=与手指 1:1）
   "FourFingerGestures": false,      // 四指接管：横滑切桌面 + 点按反向切换器（启用前把系统四指手势设为"无"）
   "FourFingerSwipeThreshold": 60,   // 四指横滑触发位移（越小越灵敏；抬指时落回阈值内=撤销）
   "FourFingerSwipeStride": 300,     // 总位移每超过多少多切一格（单次最多 3 格）

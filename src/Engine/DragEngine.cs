@@ -266,7 +266,7 @@ public class DragEngine {
                         if (AltWindowResizer.Start(_config.AltResizeCenterPercent)) {
                             _state = State.Resizing;
                             ScrollSuppressor.SetOverrideCursor(AltWindowResizer.ZoneCursor);
-                            if (found) AltWindowResizer.OnDelta(dx, dy);
+                            if (found) AltWindowResizer.OnDelta(dx * _config.AltResizeSpeed, dy * _config.AltResizeSpeed);
                         } else {
                             Logger.Log("engine: resize target invalid → idle");
                             _state = State.Idle;
@@ -296,7 +296,7 @@ public class DragEngine {
                 }
                 {
                     (bool found, float dx, float dy, float _) = GetMaxTrustedDelta(contacts, now);
-                    if (found) AltWindowResizer.OnDelta(dx, dy); // raw 1:1 — no speed/accel curve
+                    if (found) AltWindowResizer.OnDelta(dx * _config.AltResizeSpeed, dy * _config.AltResizeSpeed);
                 }
                 break;
 
@@ -388,7 +388,9 @@ public class DragEngine {
                 break;
 
             case State.Resizing:
-                if (!AltWindowDragger.IsAltDown() || now - _prevTime > _config.LiftedSilenceMs) {
+                // Wider than the drag's silence window: the pad stops reporting when the fingers
+                // hold still, and a mid-gesture finger adjustment must not drop the resize.
+                if (!AltWindowDragger.IsAltDown() || now - _prevTime > Math.Max(_config.LiftedSilenceMs, 180)) {
                     Logger.Log(!AltWindowDragger.IsAltDown()
                         ? "engine: alt released → end window resize"
                         : "engine: input silent → end window resize");
