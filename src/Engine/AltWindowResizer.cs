@@ -5,18 +5,21 @@ namespace ThreeFingerDragLite.Engine;
 
 /// <summary>
 /// AltSnap-style window resizing for Alt + two-finger drag (the equivalent of AltSnap's
-/// Alt+right-button drag). Same philosophy as AltWindowDragger: no button is simulated at all,
-/// the cursor keeps following the fingers (injected relative moves) and this class resizes the
-/// window under the cursor via SetWindowPos.
+/// Alt+right-button drag). No button is simulated; the window is resized directly via SetWindowPos.
 ///
-/// Region model (mirrors AltSnap's ResizeCenter=1 "All directions"):
-/// each axis is split by a central band of AltResizeCenterPercent% of that axis' size.
-///   - cursor inside the band  → BOTH edges of that axis move symmetrically (1:1 with the drag,
-///     window center on that axis stays fixed); inside both bands → all four edges (AltSnap's
-///     center "all directions" mode)
-///   - cursor outside the band → only the nearest edge of that axis follows the cursor,
-///     the opposite edge stays fixed
-/// A maximized window is restored first.
+/// Tracking model (the smoothness-critical part): the window is NOT driven by reading the cursor
+/// back. Injected relative cursor moves pass through pointer ballistics asynchronously, so a
+/// GetCursorPos-driven edge lags a frame and amplifies wobble. Instead the scaled finger delta is
+/// accumulated here and drives BOTH the window edges and the cursor, the latter through an
+/// absolute-position injection (absolute moves bypass ballistics) — window and cursor stay
+/// locked to the fingers 1:1 with zero readback latency.
+///
+/// Region model per axis (mirrors AltSnap's ResizeCenter/SidesFraction):
+///   - center band of AltResizeCenterPercent% of the axis → BOTH edges move symmetrically
+///     (1:1 with the drag, axis center fixed)
+///   - side bands of AltResizeSidesPercent/2 % at each end → that end's edge moves
+///   - between the bands → DEAD: that axis does not resize at all (keeps unintended
+///     diagonal wobble from touching the other axis, which is what makes AltSnap feel precise)
 /// </summary>
 public static class AltWindowResizer {
     private const int MinWidth = 120;
@@ -25,16 +28,17 @@ public static class AltWindowResizer {
     private static IntPtr _hwnd;
     private static RECT _base; // window rect at gesture start
     private static int _startCursorX, _startCursorY;
-    private static bool _horizBoth, _vertBoth;         // center band on that axis
-    private static bool _moveRightEdge, _moveBottomEdge; // nearest edge when not in the band
+    private static float _accX, _accY; // accumulated scaled finger delta
+    private static int _horizMode, _vertMode; // 0=dead, 1=near, 2=far, 3=both
     private static bool _active;
 
-    /// <summary>Begins resizing the window under the cursor. <paramref name="centerPercent"/> is the
-    /// width of the central "all directions" region in percent of the window (0 = plain nearest-edge
-    /// quadrants). Returns false when there is no valid target.</summary>
-    public static bool Start(int centerPercent) {
+    /// <summary>Begins resizing the window under the cursor; the region model comes from the two
+    /// percent parameters (see the class comment). Returns false when there is no valid target.</summary>
+    public static bool Start(int centerPercent, int sidesPercent) {
         _active = false;
         _hwnd = IntPtr.Zero;
+        _accX = 0;
+        _accY = 0;
 
         if (!AltWindowDragger.TryResolveTarget(out IntPtr hwnd, out RECT rect, out POINT cursor)) return false;
 
@@ -42,74 +46,58 @@ public static class AltWindowResizer {
         _base = rect;
         _startCursorX = cursor.X;
         _startCursorY = cursor.Y;
-
-        float cx = (rect.left + rect.right) / 2f;
-        float cy = (rect.top + rect.bottom) / 2f;
-        float bandX = (rect.right - rect.left) * centerPercent / 200f; // half-band (percent covers the full axis)
-        float bandY = (rect.bottom - rect.top) * centerPercent / 200f;
-        _horizBoth = centerPercent > 0 && MathF.Abs(cursor.X - cx) <= bandX;
-        _vertBoth = centerPercent > 0 && MathF.Abs(cursor.Y - cy) <= bandY;
-        _moveRightEdge = cursor.X >= cx;
-        _moveBottomEdge = cursor.Y >= cy;
+        _horizMode = AxisMode(cursor.X, rect.left, rect.right, centerPercent, sidesPercent);
+        _vertMode = AxisMode(cursor.Y, rect.top, rect.bottom, centerPercent, sidesPercent);
 
         _active = true;
-        Logger.Log($"alt-resize: tracking window 0x{hwnd:X} " +
-                   $"(h: {AxisDesc(_horizBoth, _moveRightEdge)}, v: {AxisDesc(_vertBoth, _moveBottomEdge)})");
+        Logger.Log($"alt-resize: tracking window 0x{hwnd:X} (h: {AxisDesc(_horizMode)}, v: {AxisDesc(_vertMode)})");
         return true;
     }
 
-    /// <summary>Applies the cursor delta to the selected edges. Call on every gesture frame after injecting the move.</summary>
-    public static void OnCursorMoved() {
+    /// <summary>Accumulates a scaled finger delta, moves the cursor in lockstep (absolute) and
+    /// applies it to the grabbed edges. Call once per gesture frame.</summary>
+    public static void OnScaledDelta(float x, float y) {
         if (!_active) return;
-        if (!GetCursorPos(out POINT cursor)) return;
-        int dx = cursor.X - _startCursorX;
-        int dy = cursor.Y - _startCursorY;
+        _accX += x;
+        _accY += y;
+        int dx = (int)MathF.Round(_accX);
+        int dy = (int)MathF.Round(_accY);
+        MouseInjector.SetCursorAbsolute(_startCursorX + dx, _startCursorY + dy);
 
-        // Horizontal: both edges symmetric (center fixed) or the single nearest edge.
-        int left, right;
-        if (_horizBoth) {
-            left = Round(_base.left - dx / 2f);
-            right = Round(_base.right + dx / 2f);
-        } else if (_moveRightEdge) {
-            left = _base.left;
-            right = _base.right + dx;
-        } else {
-            left = _base.left + dx;
-            right = _base.right;
+        int left = _base.left, right = _base.right;
+        switch (_horizMode) {
+            case 3: left = Round(_base.left - dx / 2f); right = Round(_base.right + dx / 2f); break;
+            case 2: right = _base.right + dx; break;
+            case 1: left = _base.left + dx; break;
+            // 0: dead axis — base edges stay
         }
 
-        // Vertical: same.
-        int top, bottom;
-        if (_vertBoth) {
-            top = Round(_base.top - dy / 2f);
-            bottom = Round(_base.bottom + dy / 2f);
-        } else if (_moveBottomEdge) {
-            top = _base.top;
-            bottom = _base.bottom + dy;
-        } else {
-            top = _base.top + dy;
-            bottom = _base.bottom;
+        int top = _base.top, bottom = _base.bottom;
+        switch (_vertMode) {
+            case 3: top = Round(_base.top - dy / 2f); bottom = Round(_base.bottom + dy / 2f); break;
+            case 2: bottom = _base.bottom + dy; break;
+            case 1: top = _base.top + dy; break;
         }
 
         // Clamp to the minimum size without moving whatever is fixed (in symmetric mode the base center).
         int width = Math.Max(MinWidth, right - left);
         int height = Math.Max(MinHeight, bottom - top);
-        if (_horizBoth) {
+        if (_horizMode == 3) {
             float c = (_base.left + _base.right) / 2f;
             left = Round(c - width / 2f);
             right = left + width;
-        } else if (_moveRightEdge) {
+        } else if (_horizMode == 2) {
             right = left + width;
-        } else {
+        } else if (_horizMode == 1) {
             left = right - width;
         }
-        if (_vertBoth) {
+        if (_vertMode == 3) {
             float c = (_base.top + _base.bottom) / 2f;
             top = Round(c - height / 2f);
             bottom = top + height;
-        } else if (_moveBottomEdge) {
+        } else if (_vertMode == 2) {
             bottom = top + height;
-        } else {
+        } else if (_vertMode == 1) {
             top = bottom - height;
         }
 
@@ -121,8 +109,21 @@ public static class AltWindowResizer {
         _hwnd = IntPtr.Zero;
     }
 
-    private static string AxisDesc(bool both, bool positiveEdge) =>
-        both ? "both" : positiveEdge ? "right/bottom" : "left/top";
+    /// <summary>0=dead, 1=near(left/top), 2=far(right/bottom), 3=both(center band).</summary>
+    private static int AxisMode(float pos, int lo, int hi, int centerPercent, int sidesPercent) {
+        float size = hi - lo;
+        if (size <= 0) return 0;
+        float center = (lo + hi) / 2f;
+        if (centerPercent > 0 && MathF.Abs(pos - center) <= size * centerPercent / 200f) return 3;
+        float band = size * sidesPercent / 200f;
+        if (pos - lo < band) return 1;
+        if (hi - pos < band) return 2;
+        return 0;
+    }
+
+    private static string AxisDesc(int mode) => mode switch {
+        3 => "both", 2 => "right/bottom", 1 => "left/top", _ => "none"
+    };
 
     private static int Round(float v) => (int)MathF.Round(v);
 }

@@ -260,11 +260,11 @@ public class DragEngine {
                     if (found) _armedMovement += dist;
                     if (_armedMovement >= _config.StartThreshold) {
                         Logger.Log($"engine: start resize (movement {_armedMovement:F1} >= {_config.StartThreshold})");
-                        if (AltWindowResizer.Start(_config.AltResizeCenterPercent)) {
+                        if (AltWindowResizer.Start(_config.AltResizeCenterPercent, _config.AltResizeSidesPercent)) {
                             _state = State.Resizing;
                             if (found) {
-                                InjectDelta(dx, dy, gap);
-                                AltWindowResizer.OnCursorMoved();
+                                (float sx, float sy) = ComputeScaled(dx, dy, gap);
+                                AltWindowResizer.OnScaledDelta(sx, sy);
                             }
                         } else {
                             Logger.Log("engine: resize target invalid → idle");
@@ -295,8 +295,10 @@ public class DragEngine {
                 }
                 {
                     (bool found, float dx, float dy, float _) = GetMaxTrustedDelta(contacts, now);
-                    if (found) InjectDelta(dx, dy, gap);
-                    AltWindowResizer.OnCursorMoved();
+                    if (found) {
+                        (float sx, float sy) = ComputeScaled(dx, dy, gap);
+                        AltWindowResizer.OnScaledDelta(sx, sy);
+                    }
                 }
                 break;
 
@@ -537,6 +539,12 @@ public class DragEngine {
     // ---------- Speed & acceleration (from ThreeFingerDragOnWindows DistanceManager) ----------
 
     private void InjectDelta(float dx, float dy, long elapsedMs) {
+        (float x, float y) = ComputeScaled(dx, dy, elapsedMs);
+        MouseInjector.ShiftCursorPosition(x, y);
+    }
+
+    /// <summary>Speed factor + acceleration curve (from ThreeFingerDragOnWindows DistanceManager).</summary>
+    private (float x, float y) ComputeScaled(float dx, float dy, long elapsedMs) {
         float speedFactor = _config.Speed / 120f;
         float x = dx * speedFactor, y = dy * speedFactor;
 
@@ -551,7 +559,7 @@ public class DragEngine {
             y *= pointerVelocity;
         }
 
-        MouseInjector.ShiftCursorPosition(x, y);
+        return (x, y);
     }
 
     private static double Sigmoid(double value) {

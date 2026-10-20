@@ -21,6 +21,19 @@ public static class MouseInjector {
         Send(InputBuffer, MOUSEEVENTF_MOVE, dx: intX, dy: intY);
     }
 
+    /// <summary>Sets the cursor to an absolute virtual-desktop coordinate. Absolute moves bypass
+    /// pointer ballistics ("Enhance pointer precision"), so the cursor lands exactly where
+    /// commanded — used during Alt gestures where the window must track the input 1:1.</summary>
+    public static void SetCursorAbsolute(int x, int y) {
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        int vw = Math.Max(1, GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1);
+        int vh = Math.Max(1, GetSystemMetrics(SM_CYVIRTUALSCREEN) - 1);
+        long nx = Math.Clamp((long)(x - vx) * 65535 / vw, 0, 65535);
+        long ny = Math.Clamp((long)(y - vy) * 65535 / vh, 0, 65535);
+        Send(InputBuffer, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, dx: (int)nx, dy: (int)ny);
+    }
+
     public static void ButtonDown(DragButton button) => Send(InputBuffer, ButtonFlag(button, down: true));
     public static void ButtonUp(DragButton button) => Send(InputBuffer, ButtonFlag(button, down: false));
 

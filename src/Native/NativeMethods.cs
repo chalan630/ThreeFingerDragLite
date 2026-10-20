@@ -293,6 +293,15 @@ internal static partial class NativeMethods {
     public const int INPUT_MOUSE = 0;
     public const int INPUT_KEYBOARD = 1;
     public const int KEYEVENTF_KEYUP = 0x0002;
+    public const int MOUSEEVENTF_ABSOLUTE = 0x8000;
+    public const int MOUSEEVENTF_VIRTUALDESK = 0x4000;
+
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int nIndex);
+    public const int SM_XVIRTUALSCREEN = 76;
+    public const int SM_YVIRTUALSCREEN = 77;
+    public const int SM_CXVIRTUALSCREEN = 78;
+    public const int SM_CYVIRTUALSCREEN = 79;
     public const int MOUSEEVENTF_MOVE = 0x0001;
     public const int MOUSEEVENTF_LEFTDOWN = 0x0002;
     public const int MOUSEEVENTF_LEFTUP = 0x0004;
