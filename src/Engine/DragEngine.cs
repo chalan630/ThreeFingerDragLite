@@ -54,6 +54,7 @@ public class DragEngine {
     }
 
     private const int TrustDelayMs = 40; // a contact must persist this long before its movement counts
+    private const int ResizeSilenceMs = 180; // the pad stops reporting when fingers hold still; a pause must not end a resize
 
     private readonly AppConfig _config;
     private State _state = State.Idle;
@@ -64,6 +65,7 @@ public class DragEngine {
 
     private readonly Dictionary<int, long> _quarantine = new();
     private readonly HashSet<int> _trusted = new();
+    private readonly List<int> _staleIds = new(); // scratch buffer for UpdateTrust
 
     private float _armedMovement;
 
@@ -285,7 +287,7 @@ public class DragEngine {
                     ResetQuarantine();
                     break;
                 }
-                if (liftedGap || contacts.Length != 2) {
+                if (gap > Math.Max(_config.LiftedSilenceMs, ResizeSilenceMs) || contacts.Length != 2) {
                     // Finger count changed (3 = the drag can take over from Idle next frame) or fingers lifted.
                     Logger.Log("engine: resize end");
                     ScrollSuppressor.Remove();
@@ -296,7 +298,9 @@ public class DragEngine {
                 }
                 {
                     (bool found, float dx, float dy, float _) = GetMaxTrustedDelta(contacts, now);
-                    if (found) AltWindowResizer.OnDelta(dx * _config.AltResizeSpeed, dy * _config.AltResizeSpeed);
+                    // After a pause the first frame only rebases: a lift + re-land within the silence
+                    // window can reuse contact ids and would otherwise show up as a position jump.
+                    if (found && !liftedGap) AltWindowResizer.OnDelta(dx * _config.AltResizeSpeed, dy * _config.AltResizeSpeed);
                 }
                 break;
 
@@ -390,7 +394,7 @@ public class DragEngine {
             case State.Resizing:
                 // Wider than the drag's silence window: the pad stops reporting when the fingers
                 // hold still, and a mid-gesture finger adjustment must not drop the resize.
-                if (!AltWindowDragger.IsAltDown() || now - _prevTime > Math.Max(_config.LiftedSilenceMs, 180)) {
+                if (!AltWindowDragger.IsAltDown() || now - _prevTime > Math.Max(_config.LiftedSilenceMs, ResizeSilenceMs)) {
                     Logger.Log(!AltWindowDragger.IsAltDown()
                         ? "engine: alt released → end window resize"
                         : "engine: input silent → end window resize");
@@ -537,23 +541,33 @@ public class DragEngine {
     }
 
     private void UpdateTrust(TouchpadContact[] contacts, long now) {
-        _trusted.RemoveWhere(id => contacts.All(c => c.ContactId != id));
+        // Runs on every input frame: no LINQ/closures/allocations here.
+        _staleIds.Clear();
+        foreach (int id in _trusted)
+            if (!ContainsId(contacts, id)) _staleIds.Add(id);
+        foreach (int id in _staleIds) _trusted.Remove(id);
 
-        var expiredQuarantine = new List<int>();
+        _staleIds.Clear();
         foreach (var (id, firstSeen) in _quarantine) {
-            if (contacts.All(c => c.ContactId != id)) {
-                expiredQuarantine.Add(id);
+            if (!ContainsId(contacts, id)) {
+                _staleIds.Add(id);
             } else if (now - firstSeen > TrustDelayMs) {
-                expiredQuarantine.Add(id);
+                _staleIds.Add(id);
                 _trusted.Add(id);
             }
         }
-        foreach (int id in expiredQuarantine) _quarantine.Remove(id);
+        foreach (int id in _staleIds) _quarantine.Remove(id);
 
         foreach (var contact in contacts) {
             if (!_trusted.Contains(contact.ContactId) && !_quarantine.ContainsKey(contact.ContactId))
                 _quarantine[contact.ContactId] = now;
         }
+    }
+
+    private static bool ContainsId(TouchpadContact[] contacts, int id) {
+        foreach (var c in contacts)
+            if (c.ContactId == id) return true;
+        return false;
     }
 
     private void ResetQuarantine() {

@@ -17,12 +17,10 @@ namespace ThreeFingerDragLite.Engine;
 /// Region model (nine-zone, per the AltSnap feel):
 /// each axis is split into a central band of AltResizeCenterPercent% of the axis' size plus the
 /// two parts on either side:
-///   - cursor in the central band on an axis → BOTH edges of that axis move symmetrically
-///     (1:1 with the drag, axis center fixed)
-///   - cursor in the left/right (or top/bottom) part → only that nearest edge of the axis moves
-/// Combined: center×center = all four edges (AltSnap's "all directions" mode); left/right part
-/// with vertical center = width only; top/bottom part with horizontal center = height only;
-/// corner quadrants = the two nearest edges (classic corner resize). No dead zones.
+///   - center band on both axes → all four edges move symmetrically (AltSnap's "all directions")
+///   - left/right part with vertical center → only the nearest vertical edge (width only)
+///   - top/bottom part with horizontal center → only the nearest horizontal edge (height only)
+///   - corner quadrants → the two nearest edges (classic corner resize). No dead zones.
 /// The matching resize-arrow cursor is exposed in <see cref="ZoneCursor"/>.
 /// </summary>
 public static class AltWindowResizer {
@@ -33,8 +31,10 @@ public static class AltWindowResizer {
     private static RECT _base; // window rect at gesture start
     private static int _startCursorX, _startCursorY;
     private static float _accX, _accY; // accumulated raw finger delta
-    private static int _horizMode, _vertMode; // 1=near(left/top), 2=far(right/bottom), 3=both
+    private static int _horizMode, _vertMode; // 0=fixed, 1=near(left/top), 2=far(right/bottom), 3=both
     private static bool _active;
+    private static int _lastAdx, _lastAdy; // last injected cursor offset
+    private static RECT _lastRect; // last rect posted to the window
 
     /// <summary>The resize-arrow cursor matching the grabbed zone (set by the last Start call).</summary>
     public static IntPtr ZoneCursor { get; private set; }
@@ -52,10 +52,17 @@ public static class AltWindowResizer {
 
         _hwnd = hwnd;
         _base = rect;
+        _lastRect = rect;
+        _lastAdx = 0;
+        _lastAdy = 0;
         _startCursorX = cursor.X;
         _startCursorY = cursor.Y;
         _horizMode = AxisMode(cursor.X, rect.left, rect.right, centerPercent);
         _vertMode = AxisMode(cursor.Y, rect.top, rect.bottom, centerPercent);
+        // Edge-middle zones change one dimension only: the other axis (whose central band the
+        // cursor is in) stays fixed instead of growing symmetrically.
+        if (_horizMode == 3 && _vertMode != 3) _horizMode = 0;
+        else if (_vertMode == 3 && _horizMode != 3) _vertMode = 0;
         ZoneCursor = ZoneCursorFor(_horizMode, _vertMode);
 
         _active = true;
@@ -72,7 +79,11 @@ public static class AltWindowResizer {
         _accY += dy;
         int adx = (int)MathF.Round(_accX);
         int ady = (int)MathF.Round(_accY);
-        MouseInjector.SetCursorAbsolute(_startCursorX + adx, _startCursorY + ady);
+        if (adx != _lastAdx || ady != _lastAdy) {
+            _lastAdx = adx;
+            _lastAdy = ady;
+            MouseInjector.SetCursorAbsolute(_startCursorX + adx, _startCursorY + ady);
+        }
 
         int left = _base.left, right = _base.right;
         switch (_horizMode) {
@@ -111,8 +122,15 @@ public static class AltWindowResizer {
             top = bottom - height;
         }
 
+        // Identical rect (clamped at the minimum size, fixed axis, sub-pixel delta): nothing to
+        // post — every async request is queued in the target app and replayed in order.
+        var next = new RECT { left = left, top = top, right = left + width, bottom = top + height };
+        if (next.left == _lastRect.left && next.top == _lastRect.top &&
+            next.right == _lastRect.right && next.bottom == _lastRect.bottom) return;
+        _lastRect = next;
+
         // Async: a slow target app (browser relayout) must never block the raw-input thread and
-        // back up gesture frames — pending positions coalesce instead.
+        // back up gesture frames.
         SetWindowPos(_hwnd, IntPtr.Zero, left, top, width, height,
             SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     }
@@ -133,14 +151,14 @@ public static class AltWindowResizer {
 
     private static IntPtr ZoneCursorFor(int h, int v) {
         if (h == 3 && v == 3) return LoadCursorW(IntPtr.Zero, IDC_SIZEALL);
-        if (h == 3) return LoadCursorW(IntPtr.Zero, IDC_SIZENS);
-        if (v == 3) return LoadCursorW(IntPtr.Zero, IDC_SIZEWE);
+        if (h == 0) return LoadCursorW(IntPtr.Zero, IDC_SIZENS);
+        if (v == 0) return LoadCursorW(IntPtr.Zero, IDC_SIZEWE);
         bool diagonalNWSE = (h == 2) == (v == 2); // right+bottom or left+top
         return LoadCursorW(IntPtr.Zero, diagonalNWSE ? IDC_SIZENWSE : IDC_SIZENESW);
     }
 
     private static string AxisDesc(int mode) => mode switch {
-        3 => "both", 2 => "right/bottom", _ => "left/top"
+        3 => "both", 2 => "right/bottom", 0 => "fixed", _ => "left/top"
     };
 
     private static int Round(float v) => (int)MathF.Round(v);

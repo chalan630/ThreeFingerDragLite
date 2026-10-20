@@ -36,7 +36,8 @@ publish\ThreeFingerDragLite.exe                 # 后台启动；单实例互斥
              ├─ KeyInjector（SendInput 键盘和弦：切桌面/切换器热键）
              ├─ AltWindowDragger（Alt+三指：直接 SetWindowPos 移窗）
              ├─ AltWindowResizer（Alt+双指：定向改边缩放）
-             └─ ScrollSuppressor（手势期间的 WH_MOUSE_LL：吞滚轮 + 缩放箭头指针）
+             ├─ ScrollSuppressor（手势期间的 WH_MOUSE_LL：吞滚轮）
+             └─ CursorOverlay（缩放期间的近乎透明置顶窗口：应答 WM_SETCURSOR 显示缩放箭头；钩子里的 SetCursor 对别的进程窗口无效）
 WM_TIMER(30ms) → DragEngine.Tick（静默判抬指、保持超时）
 ```
 

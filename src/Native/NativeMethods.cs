@@ -440,6 +440,19 @@ internal static partial class NativeMethods {
     public static readonly IntPtr IDC_SIZENS = new(32645);
     public static readonly IntPtr IDC_SIZEALL = new(32646);
 
+    public const uint WM_SETCURSOR = 0x0020;
+    public const uint WM_MOUSEACTIVATE = 0x0021;
+    public const uint WS_POPUP = 0x80000000;
+    public const uint WS_EX_TOPMOST = 0x00000008;
+    public const uint WS_EX_TOOLWINDOW = 0x00000080;
+    public const uint WS_EX_LAYERED = 0x00080000;
+    public const uint WS_EX_NOACTIVATE = 0x08000000;
+    public const uint LWA_ALPHA = 0x00000002;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
     [DllImport("user32.dll")]
     public static extern IntPtr WindowFromPoint(POINT point);
 
@@ -460,8 +473,12 @@ internal static partial class NativeMethods {
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
     public const uint SWP_NOZORDER = 0x0004;
     public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_SHOWWINDOW = 0x0040;
+    public const uint SWP_HIDEWINDOW = 0x0080;
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
     public const uint SWP_ASYNCWINDOWPOS = 0x4000;
 
     [DllImport("user32.dll")]

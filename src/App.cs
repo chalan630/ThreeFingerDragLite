@@ -86,7 +86,7 @@ public class App : IDisposable {
                         Logger.Verbose("diag: WM_INPUT parse returned no contacts");
                         break;
                     }
-                    Logger.Verbose($"diag: WM_INPUT parsed {contacts.Count} contacts, declared={declaredCount}");
+                    if (Logger.IsVerbose) Logger.Verbose($"diag: WM_INPUT parsed {contacts.Count} contacts, declared={declaredCount}");
 
                     foreach (var frame in _assembler.Receive(contacts, declaredCount)) {
                         if (frame.Length == 0) continue;
