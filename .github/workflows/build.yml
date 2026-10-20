@@ -1,0 +1,52 @@
+name: Build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-win-x64:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish (win-x64, self-contained, single file)
+        run: dotnet publish ThreeFingerDragLite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o publish
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $stage = 'stage/ThreeFingerDragLite'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item publish/ThreeFingerDragLite.exe $stage
+          Copy-Item publish/app.ico $stage
+          Copy-Item README.md LICENSE CHANGELOG.md $stage
+          Compress-Archive -Path stage/ThreeFingerDragLite -DestinationPath ThreeFingerDragLite-win-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ThreeFingerDragLite-win-x64
+          path: ThreeFingerDragLite-win-x64.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          body: |
+            开箱即用版：解压后运行 `ThreeFingerDragLite.exe`，无需安装 .NET 运行时（自包含单文件，约 30 MB）。
+
+            - 建议保持 `app.ico` 与 exe 同目录（托盘图标加载它；缺失时自动回退到 exe 内嵌图标）。
+            - 配置与日志位于 `%LOCALAPPDATA%\ThreeFingerDragLite\`，可用托盘菜单「打开配置文件夹」直达。
+            - 已知边界与调参说明见 README「排障」与 DEVELOPMENT.md。
+          files: ThreeFingerDragLite-win-x64.zip

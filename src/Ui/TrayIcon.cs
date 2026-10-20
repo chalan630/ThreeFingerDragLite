@@ -62,9 +62,14 @@ public class TrayIcon : IDisposable {
     }
 
     private static IntPtr LoadAppIcon() {
+        // Preferred: app.ico shipped next to the exe.
         string path = Path.Combine(AppContext.BaseDirectory, "app.ico");
-        if (!File.Exists(path)) return IntPtr.Zero;
-        return LoadImageW(IntPtr.Zero, path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE);
+        if (File.Exists(path)) {
+            IntPtr h = LoadImageW(IntPtr.Zero, path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE);
+            if (h != IntPtr.Zero) return h;
+        }
+        // Fallback: the icon embedded in the exe by <ApplicationIcon> (single-file distribution without app.ico).
+        return LoadImageW(GetModuleHandleW(null), (IntPtr)1, IMAGE_ICON, 0, 0, 0);
     }
 
     /// <summary>Handles the tray callback message. Returns true if the message was consumed.</summary>

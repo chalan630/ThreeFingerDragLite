@@ -315,6 +315,10 @@ internal static partial class NativeMethods {
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern IntPtr LoadImageW(IntPtr hInst, string lpszName, uint uType, int cxDesired, int cyDesired, uint fuLoad);
 
+    // MAKEINTRESOURCE variant: load a resource compiled into this exe (e.g. the <ApplicationIcon> group).
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr LoadImageW(IntPtr hInst, IntPtr lpszName, uint uType, int cxDesired, int cyDesired, uint fuLoad);
+
     public const uint IMAGE_ICON = 1;
     public const uint LR_LOADFROMFILE = 0x00000010;
 
