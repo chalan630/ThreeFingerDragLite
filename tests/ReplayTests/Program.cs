@@ -37,9 +37,43 @@ internal static class Program {
         Run("three-finger action None never arms", ActionNone);
         Run("gain model needs three bins, interpolates and resets", GainModelCurve);
         Run("three-finger gain follows the learned single-finger curve", LearnedGainDrivesDrag);
+        Run("startup registration toggles only its own value and reads external changes", StartupToggle);
 
         Console.WriteLine($"{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
+    }
+
+    private static void StartupToggle() {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        // 独立临时键，不触碰真实的 Windows 启动项。
+        string path = @"Software\ThreeFingerDragLite\Tests\" + Guid.NewGuid().ToString("N");
+        var startup = new StartupRegistration(path);
+        try {
+            Check(!startup.IsEnabled, "missing startup value must be disabled");
+            startup.SetEnabled(false);
+            using var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(path);
+            key.SetValue("OtherApp", "keep");
+            startup.SetEnabled(true);
+            Check(startup.IsEnabled, "startup registration not enabled");
+            string executable = Environment.ProcessPath!;
+            string expected = $"\"{executable}\"";
+            if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
+                expected += $" \"{typeof(StartupRegistration).Assembly.Location}\"";
+            Check(key.GetValue("ThreeFingerDragLite") as string == expected, "registration command must quote the executable and assembly paths");
+            startup.SetEnabled(true);
+            startup.SetEnabled(false);
+            startup.SetEnabled(false);
+            Check(!startup.IsEnabled, "startup registration not removed");
+            Check(key.GetValue("OtherApp") as string == "keep", "unrelated registry value changed");
+            key.SetValue("ThreeFingerDragLite", "\"C:\\Old Location\\ThreeFingerDragLite.exe\"");
+            Check(!startup.IsEnabled, "old executable path must not count as this copy");
+            startup.SetEnabled(true);
+            Check(startup.IsEnabled, "old executable path not updated");
+            key.DeleteValue("ThreeFingerDragLite");
+            Check(!startup.IsEnabled, "external removal not reflected");
+        } finally {
+            Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(path, throwOnMissingSubKey: false);
+        }
     }
 
     private static void Run(string name, Action test) {

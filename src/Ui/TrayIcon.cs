@@ -16,6 +16,8 @@ public class TrayIcon : IDisposable {
     private const uint MenuSyncRefresh = 12;
     private const uint MenuAcceleration = 13;
     private const uint MenuRecalibrate = 14;
+    private const uint MenuStartup = 15;
+    private readonly StartupRegistration _startup = new();
 
     // Value pickers: command id = base + index (98/99 reserved for "current value" info entries).
     private const uint HoldBase = 100;
@@ -143,6 +145,16 @@ public class TrayIcon : IDisposable {
         AppendChoices(menu, ThresholdBase, "触发灵敏度", ThresholdValues, ThresholdLabels, _config.StartThreshold, $"阈值 {_config.StartThreshold}", _config.Enabled);
         AppendMenuW(menu, MF_SEPARATOR, IntPtr.Zero, "");
 
+        bool? startupEnabled = null;
+        try {
+            startupEnabled = _startup.IsEnabled;
+        } catch (Exception ex) {
+            Logger.Log("startup: failed to read registration: " + ex.Message);
+        }
+        if (startupEnabled.HasValue)
+            AppendChecked(menu, MenuStartup, startupEnabled.Value, "开机自启");
+        else
+            AppendMenuW(menu, MF_STRING | MF_GRAYED, (IntPtr)MenuStartup, "开机自启（读取失败）");
         AppendMenuW(menu, MF_STRING, (IntPtr)MenuOpenFolder, "打开配置文件夹");
         AppendMenuW(menu, MF_STRING, (IntPtr)MenuReload, "重新加载配置");
         AppendMenuW(menu, MF_SEPARATOR, IntPtr.Zero, "");
@@ -181,6 +193,14 @@ public class TrayIcon : IDisposable {
                 break;
             case MenuRecalibrate:
                 _onRecalibrate();
+                break;
+            case MenuStartup:
+                try {
+                    _startup.SetEnabled(!_startup.IsEnabled);
+                } catch (Exception ex) {
+                    Logger.Log("startup: failed to change registration: " + ex.Message);
+                    ShowBalloon("开机自启设置失败", "无法修改当前用户的启动项，请检查权限或安全软件限制。");
+                }
                 break;
             case MenuOpenFolder:
                 OpenConfigFolder();
