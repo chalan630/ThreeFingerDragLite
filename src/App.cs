@@ -24,7 +24,7 @@ public class App : IDisposable {
 
     public App(AppConfig config) {
         _config = config;
-        _engine = new DragEngine(config, new Win32GestureHost(config));
+        _engine = new DragEngine(config, new Win32GestureHost(config), GainModel.CreateDefault());
     }
 
     private const uint FastTickMs = 16;
@@ -76,7 +76,7 @@ public class App : IDisposable {
             Logger.Log("ERROR: failed to register touchpad raw input. Exiting.");
         if (touchpadExists && !registered) return 1;
 
-        _trayIcon = new TrayIcon(_hwnd, _config, ApplyConfig, Quit);
+        _trayIcon = new TrayIcon(_hwnd, _config, ApplyConfig, Quit, Recalibrate);
         Notifier.Sink = _trayIcon.ShowBalloon;
         SetTimer(_hwnd, (IntPtr)1, _tickMs, IntPtr.Zero);
 
@@ -149,6 +149,7 @@ public class App : IDisposable {
 
                 case WM_DESTROY:
                     _engine.ForceRelease();
+                    _engine.Gain.Save();
                     KillTimer(hWnd, (IntPtr)1);
                     PostQuitMessage(0);
                     break;
@@ -212,6 +213,12 @@ public class App : IDisposable {
         Logger.Log("config applied: " +
                    $"enabled={_config.Enabled} hold={_config.HoldEnabled} takeover={_config.TakeoverWhenSingleFinger} " +
                    $"speed={_config.Speed} accel={_config.Acceleration} threshold={_config.StartThreshold}");
+    }
+
+    private void Recalibrate() {
+        _engine.Gain.Reset();
+        _engine.Gain.Save();
+        Logger.Log("gain: learned curve reset from tray");
     }
 
     private void Quit() {

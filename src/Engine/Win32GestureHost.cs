@@ -28,6 +28,19 @@ public sealed class Win32GestureHost : IGestureHost {
     public void MouseButtonUp(DragButton button) => MouseInjector.ButtonUp(button);
     public void MoveCursor(float dx, float dy) => MouseInjector.ShiftCursorPosition(dx, dy);
 
+    public void CursorPosition(out int x, out int y) {
+        GetCursorPos(out POINT p);
+        x = p.X;
+        y = p.Y;
+    }
+
+    public void VirtualScreen(out int left, out int top, out int right, out int bottom) {
+        left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        right = left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        bottom = top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    }
+
     public bool WindowMoveStart() => AltWindowDragger.Start(_config.EdgeDock);
     public void WindowMoveDelta(float dx, float dy) => AltWindowDragger.OnDelta(dx, dy);
     public void WindowMoveUpdate() => AltWindowDragger.OnCursorMoved();

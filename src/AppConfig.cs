@@ -14,7 +14,7 @@ public class AppConfig {
     /// <summary>光标速度，120 为原版 ThreeFingerDragOnWindows 的中性值（乘以 Speed/120）。越大越快。</summary>
     public int Speed { get; set; } = 120;
 
-    /// <summary>指针加速度，10 为中性值（内部 a = Acceleration/10，0 关闭）。Sigmoid 曲线：慢速精细、快速省力。</summary>
+    /// <summary>指针加速度：非 0 时三指速度跟随单指学到的系统曲线（gain.json；学成前用内置 Sigmoid 曲线，此时 10 为中性值），0 = 线性。</summary>
     public int Acceleration { get; set; } = 10;
 
     /// <summary>触发拖动所需的三指累计移动距离（触控板原始单位，约等于像素）。防止轻触/误触。</summary>
@@ -157,7 +157,10 @@ public class AppConfig {
         LiftedSilenceMs    输入静默多久判定“手指已全部抬离”（默认 60 毫秒）
         HoldExitMoveThreshold
                            保持期间单指移动超过该距离即结束拖动（默认 5）
-        Acceleration       指针加速度，10 为标准（0 关闭）。与 macOS 手感相关的曲线
+        Acceleration       指针加速度（0 = 线性，非 0 = 开）。开启时程序在你用单指时自动学习
+                           系统指针曲线（存于本目录 gain.json），三指速度随之对齐单指；
+                           学成前用内置曲线。改了触控板“光标速度”会自动重学，也可在
+                           托盘菜单点“重新校准指针曲线”
         Logging            写运行日志（log.txt，出错排查用）
         VerboseLog         记录每一帧触点数据（日志量很大，仅排查用）
 

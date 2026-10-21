@@ -51,11 +51,12 @@ WM_POWERBROADCAST 唤醒 / GIDC_ARRIVAL → 重注册 Raw Input + 失效 prepars
 | `src/Touchpad/*` | Raw Input 注册、HID 报文解析、触点拼包 |
 | `src/Engine/DragEngine.cs` | 状态机：Idle/Armed/Dragging/Holding/Resizing（Armed 按和弦动作分流：Drag/MoveWindow/ResizeWindow） |
 | `src/Engine/IGestureHost.cs` | 引擎对外接缝（时钟、键盘状态、鼠标注入、窗口移动/缩放）；测试用假宿主实现它 |
+| `src/Engine/GainModel.cs` / `GainSampler.cs` | 被动学习系统单指指针增益曲线（Idle 单指笔画按速度分箱累计 光标px/触控板单位），存 `gain.json`；`DragEngine.ComputeScaled` 用它做三指增益，数据不足时回退旧 Sigmoid；注册表 `CursorSpeed` 变化时清空，托盘"重新校准指针曲线"手动清空 |
 | `src/Engine/AltWindow*.cs` | 窗口手势的窗口操作（绕开按键模拟，直接调 API；静态类，仅由 `Win32GestureHost` 调用） |
 | `tests/ReplayTests` | 零依赖回放/场景测试 |
 | `src/App.cs` | 窗口/消息循环/自检/配置热重载 |
 | `src/AppConfig.cs` | 全部配置字段 + 中文《配置说明.txt》文本 |
-| `src/Ui/TrayIcon.cs` | 托盘菜单（命令 ID 分段：开关 1-13，子菜单 base 100/200/…/1000，每段 +98 为信息项） |
+| `src/Ui/TrayIcon.cs` | 托盘菜单（命令 ID 分段：开关 1-14，子菜单 base 100/200/…/1000，每段 +98 为信息项） |
 
 **和弦路由（改手势逻辑前必背）**：（指数, 修饰键是否按住）经配置映射到动作——默认：3 指=Drag；修饰键+3 指=MoveWindow；修饰键+2 指=ResizeWindow；4+ 指完整让给系统手势；拖动中 2~3 指继续、遇 4+ 指干净释放。任何手势状态遇到不一致指数/修饰键松开/静默超时，必须清理后回 Idle。不再有 `AltWindowDrag`/`AltWindowResize` 布尔，用 `*Action = None` 关闭。
 
@@ -63,6 +64,8 @@ WM_POWERBROADCAST 唤醒 / GIDC_ARRIVAL → 重注册 Raw Input + 失效 prepars
 
 **加一个配置字段（5 处，漏一处=热重载悄悄失效）**：
 1. `AppConfig.cs` 属性（中文 XML 注释）→ 2. 同文件 `DocsText` → 3. `App.ApplyConfig()` 复制一行 → 4. `README.md` 的 jsonc 示例 → 5. 需要菜单的话 `TrayIcon.cs`。
+
+**加一个托盘菜单项**：`TrayIcon.cs` 加命令 ID 常量与菜单行，并同步 README 的菜单项对照表。菜单悬停说明（`WM_MENUSELECT` + tooltips_class32 跟踪模式）试过，在实机上不显示，已移除，不要再走这条路。
 
 **加一个手势状态/动作**：`DragEngine` 的 State 枚举 / `GestureAction` → `OnContacts` 加 case（所有退出路径！）→ `Tick` 加静默/超时 case → `ForceRelease` 加清理；需要新的外部效果就先加到 `IGestureHost` 与 `Win32GestureHost`，并在 `tests/ReplayTests/FakeHost.cs` 实现、补场景。若手势挂了钩子或按住虚拟按键，**每一条退出路径**（包括 WndProc 异常路径）都要释放。
 
@@ -79,6 +82,7 @@ WM_POWERBROADCAST 唤醒 / GIDC_ARRIVAL → 重注册 Raw Input + 失效 prepars
 7. **窗口移动/缩放不得回读光标**：相对注入过指针弹道且异步生效，`GetCursorPos` 滞后一帧会让窗口抖动。手指增量同时驱动光标（绝对定位）和窗口矩形；回读只用于系统接管光标（单指）的帧，且在自己注入后 50ms 内不信任回读。
 8. **异步 `SetWindowPos` 必须合并**：每帧一条会把慢窗口（浏览器/Electron）的消息队列堆满，窗口随后追着旧位置回放，表现为严重拖尾。移动按半个刷新周期合并（整周期会与 ~8ms 的输入帧混叠成 ~40Hz），缩放另有慢窗口降频；松手/结束时强制补发末帧。
 9. **窗口移动必须有明确的结束路径**：`AltWindowDragger.Release(hold)` 在非保持时立即 `End()`（同时提交顶部贴靠的最大化）；静默释放同样走 `WindowMoveEnd`。拖动增量走 `IGestureHost.WindowMoveDelta`，不与普通拖动的 `MoveCursor` 混用，否则残留的跟随状态会劫持后续的普通三指拖动。
+10. **三指注入的光标移动不经过触控板指针曲线**：它是相对 `SendInput`，走的是鼠标设置（`MouseSensitivity`/`MouseSpeed`），而不是触控板 `CursorSpeed`；只有单指运动由系统按触控板曲线处理（两指=滚动/缩放，三指起=系统手势，用户态无法伪装成单指）。因此三指增益靠 `GainModel` 从用户自己的单指笔画里学出系统曲线来对齐，不要硬编码曲线，也不要按 `CursorSpeed` 数值缩放（映射未测过）。采样排除贴屏幕边缘的块与离谱比值。
 
 ## 发布
 

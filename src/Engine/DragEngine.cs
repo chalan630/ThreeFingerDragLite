@@ -66,17 +66,25 @@ public class DragEngine {
 
     private float _armedMovement;
     private long _regrabUntil;
+    private readonly GainModel _gain;
+    private readonly GainSampler _gainSampler;
+    private float _smoothSpeed; // EMA of the raw finger speed (units/ms) feeding the gain curve
 
     private long _holdStartTime;
     private TouchpadContact? _holdSinglePrev;
 
-    public DragEngine(AppConfig config, IGestureHost host) {
+    public DragEngine(AppConfig config, IGestureHost host, GainModel? gain = null) {
         _config = config;
         _host = host;
+        _gain = gain ?? new GainModel();
+        _gainSampler = new GainSampler(_gain, host);
     }
 
     /// <summary>True while a gesture is in progress or the host still animates (coalesced window update pending): the app should tick fast.</summary>
     public bool NeedsFastTick => _state != State.Idle || _host.Busy;
+
+    /// <summary>The learned single-finger pointer gain curve (persisted by the app).</summary>
+    public GainModel Gain => _gain;
 
     /// <summary>Current state name (diagnostics and tests).</summary>
     public string StateName => _state.ToString();
@@ -164,6 +172,8 @@ public class DragEngine {
                 // lifting) can fire as soon as the third finger lands, without waiting
                 // out the quarantine delay again.
                 UpdateTrust(contacts, now);
+                if (contacts.Length == 1) _gainSampler.Frame(contacts[0], now);
+                else _gainSampler.Break();
                 if (contacts.Length is 2 or 3) TryArm(contacts.Length);
                 break;
 
@@ -364,6 +374,7 @@ public class DragEngine {
         if (_state is State.Dragging or State.Holding && EndWindowDragIfModifierReleased()) return;
         switch (_state) {
             case State.Idle:
+                _gainSampler.Idle(now);
                 break;
 
             case State.Dragging:
@@ -503,6 +514,7 @@ public class DragEngine {
         _quarantine.Clear();
         _trusted.Clear();
         _prevContacts = Array.Empty<TouchpadContact>();
+        _smoothSpeed = 0;
     }
 
     // ---------- Speed & acceleration (from ThreeFingerDragOnWindows DistanceManager) ----------
@@ -513,23 +525,29 @@ public class DragEngine {
         else _host.MoveCursor(x, y);
     }
 
-    /// <summary>Speed factor + acceleration curve (from ThreeFingerDragOnWindows DistanceManager).</summary>
+    /// <summary>
+    /// Speed factor + pointer gain. The gain follows the system's single-finger curve learned by
+    /// <see cref="GainModel"/>; until it has enough data the legacy sigmoid (from
+    /// ThreeFingerDragOnWindows DistanceManager) stands in.
+    /// </summary>
     private (float x, float y) ComputeScaled(float dx, float dy, long elapsedMs) {
         float speedFactor = _config.Speed / 120f;
         float x = dx * speedFactor, y = dy * speedFactor;
+        if (_config.Acceleration == 0) return (x, y);
 
-        if (_config.Acceleration != 0) {
-            float length = MathF.Sqrt(x * x + y * y);
-            float mouseVelocity = elapsedMs > 0 ? MathF.Min(length / elapsedMs, 4f) : 1f;
-            if (float.IsNaN(mouseVelocity) || float.IsInfinity(mouseVelocity)) mouseVelocity = 1;
+        float instSpeed = elapsedMs > 0 ? MathF.Sqrt(dx * dx + dy * dy) / elapsedMs : _smoothSpeed;
+        if (float.IsNaN(instSpeed) || float.IsInfinity(instSpeed)) instSpeed = _smoothSpeed;
+        _smoothSpeed = _smoothSpeed <= 0 || elapsedMs > 50 ? instSpeed : 0.5f * _smoothSpeed + 0.5f * instSpeed;
 
-            float a = _config.Acceleration / 10f;
-            float pointerVelocity = (float)(0.7 + 0.8 * Sigmoid(2.6 * a * (mouseVelocity - 1 + (3 - Math.Log2(0.8 / 0.3 - 1)) / (2.6 * a)) - 3));
-            x *= pointerVelocity;
-            y *= pointerVelocity;
-        }
+        if (_gain.Evaluate(_smoothSpeed) is float gain) return (x * gain, y * gain);
 
-        return (x, y);
+        float length = MathF.Sqrt(x * x + y * y);
+        float mouseVelocity = elapsedMs > 0 ? MathF.Min(length / elapsedMs, 4f) : 1f;
+        if (float.IsNaN(mouseVelocity) || float.IsInfinity(mouseVelocity)) mouseVelocity = 1;
+
+        float a = _config.Acceleration / 10f;
+        float pointerVelocity = (float)(0.7 + 0.8 * Sigmoid(2.6 * a * (mouseVelocity - 1 + (3 - Math.Log2(0.8 / 0.3 - 1)) / (2.6 * a)) - 3));
+        return (x * pointerVelocity, y * pointerVelocity);
     }
 
     private static double Sigmoid(double value) {

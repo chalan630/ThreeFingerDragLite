@@ -20,6 +20,10 @@ internal sealed class FakeHost : IGestureHost {
     public void MouseButtonDown(DragButton button) => Events.Add($"button-down:{button}");
     public void MouseButtonUp(DragButton button) => Events.Add($"button-up:{button}");
 
+    public int CursorX = 960, CursorY = 540;
+    public void CursorPosition(out int x, out int y) { x = CursorX; y = CursorY; }
+    public void VirtualScreen(out int left, out int top, out int right, out int bottom) { left = 0; top = 0; right = 1920; bottom = 1080; }
+
     public void MoveCursor(float dx, float dy) {
         CursorDx += dx;
         CursorDy += dy;

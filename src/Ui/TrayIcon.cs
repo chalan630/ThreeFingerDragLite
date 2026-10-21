@@ -15,6 +15,7 @@ public class TrayIcon : IDisposable {
     private const uint MenuAspectLock = 11;
     private const uint MenuSyncRefresh = 12;
     private const uint MenuAcceleration = 13;
+    private const uint MenuRecalibrate = 14;
 
     // Value pickers: command id = base + index (98/99 reserved for "current value" info entries).
     private const uint HoldBase = 100;
@@ -48,15 +49,17 @@ public class TrayIcon : IDisposable {
     private readonly AppConfig _config;
     private readonly Action _onConfigChanged;
     private readonly Action _onQuit;
+    private readonly Action _onRecalibrate;
     private NOTIFYICONDATAW _data;
     private IntPtr _hIcon = IntPtr.Zero;
     private bool _added;
 
-    public TrayIcon(IntPtr hwnd, AppConfig config, Action onConfigChanged, Action onQuit) {
+    public TrayIcon(IntPtr hwnd, AppConfig config, Action onConfigChanged, Action onQuit, Action onRecalibrate) {
         _hwnd = hwnd;
         _config = config;
         _onConfigChanged = onConfigChanged;
         _onQuit = onQuit;
+        _onRecalibrate = onRecalibrate;
 
         _hIcon = LoadAppIcon();
         string version = typeof(TrayIcon).Assembly.GetName().Version?.ToString(3) ?? "1.0";
@@ -136,6 +139,7 @@ public class TrayIcon : IDisposable {
         AppendChoices(menu, ButtonBase, "拖动按键", IndexValues(ButtonLabels.Length), ButtonLabels, (int)_config.DragButton, ButtonLabels[(int)_config.DragButton], _config.Enabled);
         AppendChoices(menu, SpeedBase, "光标速度", SpeedValues, SpeedLabels, _config.Speed, $"速度 {_config.Speed}", _config.Enabled);
         AppendChecked(menu, MenuAcceleration, _config.Acceleration != 0, "指针加速度");
+        AppendMenuW(menu, MF_STRING, (IntPtr)MenuRecalibrate, "重新校准指针曲线");
         AppendChoices(menu, ThresholdBase, "触发灵敏度", ThresholdValues, ThresholdLabels, _config.StartThreshold, $"阈值 {_config.StartThreshold}", _config.Enabled);
         AppendMenuW(menu, MF_SEPARATOR, IntPtr.Zero, "");
 
@@ -174,6 +178,9 @@ public class TrayIcon : IDisposable {
             case MenuAcceleration:
                 _config.Acceleration = _config.Acceleration != 0 ? 0 : 10;
                 SaveAndApply();
+                break;
+            case MenuRecalibrate:
+                _onRecalibrate();
                 break;
             case MenuOpenFolder:
                 OpenConfigFolder();

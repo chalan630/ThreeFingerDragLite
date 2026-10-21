@@ -12,6 +12,9 @@ public interface IGestureHost {
     void MouseButtonDown(DragButton button);
     void MouseButtonUp(DragButton button);
     void MoveCursor(float dx, float dy);
+    void CursorPosition(out int x, out int y);
+    /// <summary>Virtual-screen bounds (right/bottom exclusive).</summary>
+    void VirtualScreen(out int left, out int top, out int right, out int bottom);
 
     /// <summary>Begins moving the window under the cursor. False when there is no valid target.</summary>
     bool WindowMoveStart();

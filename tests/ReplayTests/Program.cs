@@ -32,6 +32,8 @@ internal static class Program {
         Run("aspect lock key is forwarded", AspectLock);
         Run("configurable modifier (Ctrl) and action mapping", CustomMapping);
         Run("three-finger action None never arms", ActionNone);
+        Run("gain model needs three bins, interpolates and resets", GainModelCurve);
+        Run("three-finger gain follows the learned single-finger curve", LearnedGainDrivesDrag);
 
         Console.WriteLine($"{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -266,6 +268,54 @@ internal static class Program {
         int x = 100;
         Swipe(engine, host, 3, 20, 4, ref x);
         Check(host.Events.Count == 0, "unexpected events: " + string.Join(",", host.Events));
+    }
+
+    private static void GainModelCurve() {
+        var model = new GainModel();
+        Check(model.Evaluate(1f) == null, "empty model must have no curve");
+        model.AddChunk(160, 160, 80);   // 2.0 u/ms, gain 1.0
+        model.AddChunk(160, 160, 80);
+        Check(model.Evaluate(1f) == null, "one valid bin is not enough");
+        for (int i = 0; i < 3; i++) model.AddChunk(60, 54, 80);    // 0.75 u/ms, gain 0.9
+        for (int i = 0; i < 7; i++) model.AddChunk(20, 12, 80);    // 0.25 u/ms, gain 0.6
+        Check(model.ValidBins == 3, "expected 3 valid bins, got " + model.ValidBins);
+        float slow = model.Evaluate(0.01f) ?? -1, mid = model.Evaluate(0.75f) ?? -1, fast = model.Evaluate(9f) ?? -1;
+        Check(MathF.Abs(slow - 0.6f) < 0.01f, $"low end clamps to the first bin: {slow}");
+        Check(MathF.Abs(mid - 0.9f) < 0.01f, $"mid bin gain: {mid}");
+        Check(MathF.Abs(fast - 1.0f) < 0.01f, $"high end clamps to the last bin: {fast}");
+        float between = model.Evaluate(0.5f) ?? -1;
+        Check(between > 0.6f && between < 0.9f, $"interpolated gain out of range: {between}");
+        model.Reset();
+        Check(model.Evaluate(1f) == null, "reset must clear the curve");
+    }
+
+    private static void LearnedGainDrivesDrag() {
+        var config = new AppConfig { Acceleration = 10 };
+        var host = new FakeHost { Now = 10_000 };
+        var engine = new DragEngine(config, host, new GainModel());
+
+        // (px per frame step, cursor px per frame): gain 1.0 at 0.25 u/ms, 1.5 at 0.75, 2.0 at 2.0.
+        foreach (var (step, cursorStep) in new[] { (2, 2), (6, 9), (16, 32) }) {
+            for (int s = 0; s < 8; s++) {
+                host.CursorX = 960;
+                int x = 100;
+                host.Now += 100;
+                for (int i = 0; i < 25; i++) {
+                    x += step;
+                    host.CursorX += cursorStep;
+                    Frame(engine, host, 8, C(1, x, 300));
+                }
+            }
+        }
+        Check(engine.Gain.ValidBins >= 3, "single-finger strokes did not teach the model: " + engine.Gain.Describe());
+
+        int fx = 100;
+        host.Now += 200;
+        Swipe(engine, host, 3, 30, 16, ref fx);
+        double before = host.CursorDx;
+        Swipe(engine, host, 3, 20, 16, ref fx);
+        double ratio = (host.CursorDx - before) / (20 * 16);
+        Check(Math.Abs(ratio - 2.0) < 0.15, $"three-finger gain at 2 u/ms should follow the learned 2.0, got {ratio:F2}");
     }
 
     private static int ReplayFile(string path) {
