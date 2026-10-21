@@ -21,6 +21,9 @@ internal static class Program {
         Run("three fingers drag: press, move, release after hold", ThreeFingerDrag);
         Run("hold disabled: release when fingers lift", HoldDisabled);
         Run("hold resume: fingers back within hold time continue the drag", HoldResume);
+        Run("hold: landing 1→2→3 fingers resumes without releasing", HoldLandingThroughTwoResumes);
+        Run("hold: a lasting two-finger touch drops the button for the system", HoldTwoFingersReleasesToSystem);
+        Run("drag: brief two fingers tolerated, sustained two fingers release", DragTwoFingers);
         Run("four fingers never arm", FourFingersIgnored);
         Run("modifier + three fingers moves the window, modifier release ends it", ModifierMove);
         Run("window move resumes quickly after a silence release", RegrabAfterSilence);
@@ -117,6 +120,54 @@ internal static class Program {
         Frame(engine, host, 200, C(1, 400, 300), C(2, 400, 340), C(3, 400, 380));
         Check(engine.StateName == "Dragging", "expected Dragging after re-grip, got " + engine.StateName);
         Check(!host.Has("button-up:Left"), "button was released during hold resume");
+    }
+
+    private static void HoldLandingThroughTwoResumes() {
+        var (engine, host, _) = Setup();
+        int x = 100;
+        Swipe(engine, host, 3, 20, 4, ref x);
+        host.Now += 100;
+        engine.Tick();
+        Check(engine.StateName == "Holding", "expected Holding");
+        Frame(engine, host, 200, C(1, 400, 300));
+        Frame(engine, host, 20, C(1, 400, 300), C(2, 400, 340));
+        host.Now += 10;
+        engine.Tick();
+        Check(engine.StateName == "Holding", "a brief two-finger landing must not end the hold");
+        Frame(engine, host, 20, C(1, 400, 300), C(2, 400, 340), C(3, 400, 380));
+        Check(engine.StateName == "Dragging", "expected Dragging once three fingers are down, got " + engine.StateName);
+        Check(!host.Has("button-up:Left"), "button released while landing through two fingers");
+    }
+
+    private static void HoldTwoFingersReleasesToSystem() {
+        var (engine, host, _) = Setup();
+        int x = 100;
+        Swipe(engine, host, 3, 20, 4, ref x);
+        host.Now += 100;
+        engine.Tick();
+        Check(engine.StateName == "Holding", "expected Holding");
+        Frame(engine, host, 200, C(1, 400, 300), C(2, 400, 340)); // a two-finger tap or scroll start
+        Check(!host.Has("button-up:Left"), "released before the debounce elapsed");
+        Check(host.Has("wheel-on") && !host.Has("wheel-off"), "wheel must be swallowed while holding");
+        host.Now += 250;
+        engine.Tick(); // the touch may already be over: no further frame arrives
+        Check(host.Has("button-up:Left"), "two fingers did not drop the held button");
+        Check(engine.StateName == "Idle", "expected Idle, got " + engine.StateName);
+        Check(host.Has("wheel-off"), "wheel interception not removed after release");
+    }
+
+    private static void DragTwoFingers() {
+        var (engine, host, _) = Setup();
+        int x = 100;
+        Swipe(engine, host, 3, 20, 4, ref x);
+        Swipe(engine, host, 2, 3, 4, ref x); // 24ms: a finger lifting on the way to one finger
+        Swipe(engine, host, 3, 3, 4, ref x);
+        Check(engine.StateName == "Dragging" && !host.Has("button-up:Left"), "brief two fingers broke the drag");
+        Check(host.Has("wheel-on") && !host.Has("wheel-off"), "wheel must be swallowed during a drag");
+        Swipe(engine, host, 2, 30, 4, ref x); // 240ms: sustained two fingers (scroll / right-click)
+        Check(host.Has("button-up:Left"), "sustained two fingers did not release the button");
+        Check(engine.StateName == "Idle", "expected Idle, got " + engine.StateName);
+        Check(host.Has("wheel-off"), "wheel interception not removed after release");
     }
 
     private static void FourFingersIgnored() {

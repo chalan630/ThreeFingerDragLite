@@ -58,7 +58,7 @@ WM_POWERBROADCAST 唤醒 / GIDC_ARRIVAL → 重注册 Raw Input + 失效 prepars
 | `src/AppConfig.cs` | 全部配置字段 + 中文《配置说明.txt》文本 |
 | `src/Ui/TrayIcon.cs` | 托盘菜单（命令 ID 分段：开关 1-14，子菜单 base 100/200/…/1000，每段 +98 为信息项） |
 
-**和弦路由（改手势逻辑前必背）**：（指数, 修饰键是否按住）经配置映射到动作——默认：3 指=Drag；修饰键+3 指=MoveWindow；修饰键+2 指=ResizeWindow；4+ 指完整让给系统手势；拖动中 2~3 指继续、遇 4+ 指干净释放。任何手势状态遇到不一致指数/修饰键松开/静默超时，必须清理后回 Idle。不再有 `AltWindowDrag`/`AltWindowResize` 布尔，用 `*Action = None` 关闭。
+**和弦路由（改手势逻辑前必背）**：（指数, 修饰键是否按住）经配置映射到动作——默认：3 指=Drag；修饰键+3 指=MoveWindow；修饰键+2 指=ResizeWindow；4+ 指完整让给系统手势；拖动只认 1 指（系统接管）和 3 指，持续 200ms 的 2 指视为滚动/右键，松开按键让给系统（选区保留）；遇 4+ 指干净释放。任何手势状态遇到不一致指数/修饰键松开/静默超时，必须清理后回 Idle。不再有 `AltWindowDrag`/`AltWindowResize` 布尔，用 `*Action = None` 关闭。
 
 ## 常见改动清单
 

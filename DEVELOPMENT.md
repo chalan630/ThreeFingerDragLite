@@ -67,10 +67,12 @@ ThreeFingerDragLite/
 ```
 Idle ──恰好3指落下──▶ Armed ──累计移动≥StartThreshold──▶ Dragging ──全部抬离──▶ Holding
  ▲                     │                                     │  ▲                  │
- └─非3指/抬离/出现4+指──┘                           2~3指继续 │  │放回2~3指     超时/单指轻移/4+指
+ └─非3指/抬离/出现4+指──┘                            3指继续 │  │放回3指   超时/单指轻移/4+指/持续2指
                                                      单指接管│  └──────────────────┘
                                                              └──(系统移动光标,按键保持)
 ```
+
+拖动只认 1 指和 3 指：Dragging/Holding 中恰好 2 指持续 `TwoFingerReleaseMs`（200ms）即松开按键回 Idle（选区保留），两指的滚动/右键点按完整交给系统；1↔3 指切换途经的短暂 2 指被去抖忽略；Dragging/Holding 全程挂 `ScrollSuppressor` 吞滚轮（`SyncWheelGuard`），否则 1→2→3 落指时系统两指滚动会带动内容。Holding 里的判定由 Tick 完成（点按一抬指就没有后续帧）。
 
 **和弦路由**：（指数, 修饰键是否按住）经配置映射到动作。默认 3 指 = Drag；修饰键+3 指 = MoveWindow；修饰键+2 指 = ResizeWindow（`ThreeFingerAction` / `ModifiedThreeFingerAction` / `ModifiedTwoFingerAction`，可选 Drag/MoveWindow/ResizeWindow/None）。4+ 指完整让给系统手势；进行中的拖动/保持遇到 4+ 指立即干净释放。缩放走独立的 Resizing 状态（取参与手指的平均增量），其余动作共用 Dragging/Holding。
 

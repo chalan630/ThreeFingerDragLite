@@ -26,9 +26,13 @@ namespace ThreeFingerDragLite.Engine;
 ///                          with exactly one finger left the system cursor speed takes over if enabled
 ///   Dragging  → Holding  : all fingers lifted (input silence) and HoldEnabled
 ///   Dragging  → Idle     : all fingers lifted and !HoldEnabled, or 4+ fingers land (clean release)
-///   Holding   → Dragging : 2-3 fingers placed back within HoldTimeMs (re-grip continues the drag)
+///   Holding   → Dragging : three fingers placed back within HoldTimeMs (re-grip continues the drag)
 ///   Holding   → Idle     : hold timeout, a single finger moves slightly (FastGestures exit gesture),
 ///                          or 4+ fingers land (clean release so system gestures take over)
+///   Dragging/Holding → Idle : exactly two fingers for TwoFingerReleaseMs. A drag only knows 1 and 3
+///                          fingers; two are the system's scroll / right-click, so the button is dropped
+///                          (selection kept) before the system acts. A brief 2 between 1 and 3 is ignored. Wheel messages are
+///                          swallowed for the whole Dragging/Holding span so a 1→2 landing cannot scroll.
 ///   Resizing             : the finger AVERAGE delta drives the grabbed window edges 1:1
 ///   Resizing  → Idle     : modifier released, fingers lifted / count changed, or input silence
 /// </summary>
@@ -45,6 +49,7 @@ public class DragEngine {
     private const int RegrabWindowMs = 400; // after a silence release of a window move, a re-landed chord resumes this quickly
     private const int RegrabSlackUnits = 3; // movement still required to resume (instead of the full start threshold)
     private const int ResizeSilenceMs = 180; // the pad stops reporting when fingers hold still; a pause must not end a resize
+    private const int TwoFingerReleaseMs = 200; // two fingers this long (longer than landing a third finger takes) mean "leave it to the system": drop the held button
 
     private readonly AppConfig _config;
     private readonly IGestureHost _host;
@@ -72,6 +77,8 @@ public class DragEngine {
 
     private long _holdStartTime;
     private TouchpadContact? _holdSinglePrev;
+    private long _twoSince = -1; // when exactly two fingers appeared during Dragging/Holding (-1 = not now)
+    private bool _dragWheelGuard; // wheel messages swallowed for the whole drag/hold
 
     public DragEngine(AppConfig config, IGestureHost host, GainModel? gain = null) {
         _config = config;
@@ -110,8 +117,20 @@ public class DragEngine {
         if (_windowMove && _needModifier) _regrabUntil = now + RegrabWindowMs;
     }
 
+    // A finger landing next to a lone finger (1 → 2 → 3) is read by the system as the start of a two-finger
+    // scroll, which would scroll the content under the held button and drag the selection along with it.
+    // The wheel is swallowed for the whole drag/hold (same hook the resize gesture uses).
+    private void SyncWheelGuard() {
+        bool want = _state is State.Dragging or State.Holding;
+        if (want == _dragWheelGuard) return;
+        _dragWheelGuard = want;
+        if (want) _host.WheelGuardOn();
+        else _host.WheelGuardOff();
+    }
+
     private void ToIdle() {
         _state = State.Idle;
+        _twoSince = -1;
         ResetQuarantine();
     }
 
@@ -150,6 +169,8 @@ public class DragEngine {
         _host.WindowMoveEnd();
         _regrabUntil = 0;
         _state = State.Idle;
+        SyncWheelGuard();
+        _twoSince = -1;
         ResetQuarantine();
         _armedMovement = 0;
     }
@@ -190,6 +211,7 @@ public class DragEngine {
                         _state = State.Holding;
                         _holdStartTime = now;
                         _holdSinglePrev = null;
+                        _twoSince = contacts.Length == 2 ? now : -1;
                     } else {
                         Logger.Log("engine: fingers lifted → release");
                         ReleaseDragPress();
@@ -204,6 +226,19 @@ public class DragEngine {
                     ReleaseDragPress();
                     ToIdle();
                     break;
+                }
+                if (contacts.Length == 2) {
+                    // Only 1 and 3 fingers belong to a drag; 2 fingers (scroll / right-click) go to the system.
+                    // A brief 2 is just a finger landing or lifting between 1 and 3.
+                    if (_twoSince < 0) _twoSince = now;
+                    else if (now - _twoSince >= TwoFingerReleaseMs) {
+                        Logger.Log("engine: two fingers → release to system");
+                        ReleaseDragPress();
+                        ToIdle();
+                        break;
+                    }
+                } else {
+                    _twoSince = -1;
                 }
                 if (contacts.Length >= 2) {
                     (bool found, float dx, float dy, float _) = GetMaxTrustedDelta(contacts, now);
@@ -226,12 +261,18 @@ public class DragEngine {
                     ToIdle();
                     break;
                 }
-                if (contacts.Length >= 2 && _config.HoldResumeEnabled) {
-                    Logger.Log("engine: fingers back → resume drag");
+                if (contacts.Length == 3 && _config.HoldResumeEnabled) {
+                    Logger.Log("engine: three fingers back → resume drag");
+                    _twoSince = -1;
                     ResetQuarantine(); // avoid a cursor jump from the old contact references
                     if (_windowMove) _host.WindowMoveGrab();
                     _state = State.Dragging;
+                } else if (contacts.Length == 2) {
+                    // Mid-landing (1→3) clears itself; a lasting two-finger touch is a right-click / scroll
+                    // for the system, so drop the button now (before the click) and keep the selection.
+                    if (_twoSince < 0) _twoSince = now;
                 } else if (contacts.Length == 1) {
+                    _twoSince = -1;
                     TouchpadContact contact = contacts[0];
                     if (_holdSinglePrev.HasValue && _holdSinglePrev.Value.ContactId == contact.ContactId) {
                         float move = _holdSinglePrev.Value.GetDist2D(contact);
@@ -268,6 +309,7 @@ public class DragEngine {
                 break;
         }
 
+        SyncWheelGuard();
         _prevContacts = contacts;
         _prevTime = now;
     }
@@ -371,7 +413,15 @@ public class DragEngine {
     public void Tick() {
         long now = _host.NowMs();
         _host.Tick();
-        if (_state is State.Dragging or State.Holding && EndWindowDragIfModifierReleased()) return;
+        if (_state is State.Dragging or State.Holding && EndWindowDragIfModifierReleased()) {
+            SyncWheelGuard();
+            return;
+        }
+        TickState(now);
+        SyncWheelGuard();
+    }
+
+    private void TickState(long now) {
         switch (_state) {
             case State.Idle:
                 _gainSampler.Idle(now);
@@ -386,6 +436,7 @@ public class DragEngine {
                         _state = State.Holding;
                         _holdStartTime = now;
                         _holdSinglePrev = null;
+                        _twoSince = -1;
                     } else {
                         Logger.Log("engine: input silent → release");
                         ReleaseDragPress();
@@ -393,6 +444,13 @@ public class DragEngine {
                         ToIdle();
                     }
                 }
+                break;
+
+            case State.Holding when _twoSince >= 0 && now - _twoSince >= TwoFingerReleaseMs:
+                // No frame needed: a quick two-finger tap lifts before another report arrives.
+                Logger.Log("engine: two fingers during hold → release to system");
+                ReleaseDragPress();
+                ToIdle();
                 break;
 
             case State.Holding when now - _holdStartTime > _config.HoldTimeMs:

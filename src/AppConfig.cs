@@ -153,7 +153,7 @@ public class AppConfig {
 
         ── 进阶（一般不用改）───────────────────────
 
-        HoldResumeEnabled  保持期间放回至少两根手指即可继续拖
+        HoldResumeEnabled  保持期间放回三根手指即可继续拖（持续的两指视为滚动/右键，会松开按键交给系统）
         LiftedSilenceMs    输入静默多久判定“手指已全部抬离”（默认 60 毫秒）
         HoldExitMoveThreshold
                            保持期间单指移动超过该距离即结束拖动（默认 5）
